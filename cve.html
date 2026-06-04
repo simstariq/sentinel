@@ -666,7 +666,7 @@
     try {
       const ping = await Promise.race([
         fetch(`${BACKEND}/ping`),
-        new Promise((_,r) => setTimeout(()=>r(new Error),2000))
+        new Promise((_,r) => setTimeout(()=>r(new Error),12000))
       ]);
       online = ping.ok;
     } catch {}
