@@ -1,0 +1,6 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "pip install -r backend/requirements.txt && python backend/server.py"
+restartPolicyType = "on_failure"

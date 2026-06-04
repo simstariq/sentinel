@@ -1,0 +1,1506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Attack Surface Monitor — SENTINEL</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --blue:      #4da6ff;
+      --blue-dim:  rgba(77,166,255,0.45);
+      --blue-glow: rgba(77,166,255,0.1);
+      --bg:        #080a0e;
+      --surface:   rgba(255,255,255,0.025);
+      --border:    rgba(77,166,255,0.12);
+      --border-hi: rgba(77,166,255,0.4);
+      --text:      rgba(255,255,255,0.85);
+      --text-dim:  rgba(255,255,255,0.35);
+      --text-mute: rgba(255,255,255,0.18);
+      --mono:      'JetBrains Mono', monospace;
+      --red:    #ff4d6a;
+      --orange: #ff8c42;
+      --yellow: #ffd166;
+      --green:  #06d6a0;
+    }
+
+    html, body { width: 100%; min-height: 100vh; background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; overflow-x: hidden; }
+
+    /* Scanlines */
+    body::after {
+      content: '';
+      position: fixed; inset: 0;
+      background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.012) 2px, rgba(0,0,0,0.012) 4px);
+      pointer-events: none; z-index: 9999;
+    }
+
+    /* ─── NAV ──────────────────────────────── */
+    nav {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 20px 40px;
+      border-bottom: 1px solid var(--border);
+      position: sticky; top: 0; z-index: 100;
+      background: rgba(8,10,14,0.92);
+      backdrop-filter: blur(20px);
+    }
+    .nav-brand {
+      font-size: 9px; letter-spacing: 10px; color: var(--blue-dim);
+      text-transform: uppercase; text-decoration: none;
+      transition: color 0.3s;
+    }
+    .nav-brand:hover { color: var(--blue); }
+    .nav-module {
+      font-size: 9px; letter-spacing: 5px; color: var(--text-dim);
+      text-transform: uppercase;
+    }
+    .nav-status {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 9px; letter-spacing: 3px; color: var(--text-mute);
+      text-transform: uppercase; font-family: var(--mono);
+    }
+    .status-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--text-mute);
+      transition: background 0.3s;
+    }
+    .status-dot.live { background: var(--green); box-shadow: 0 0 8px var(--green); animation: blink 2s infinite; }
+    .status-dot.scanning { background: var(--blue); box-shadow: 0 0 8px var(--blue); animation: blink 0.8s infinite; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+    /* ─── INPUT SECTION ────────────────────── */
+    .input-section {
+      padding: 48px 40px 32px;
+      max-width: 1100px; margin: 0 auto;
+    }
+
+    .input-header {
+      margin-bottom: 28px;
+    }
+    .input-header h1 {
+      font-size: 22px; font-weight: 300; letter-spacing: 1px;
+      color: var(--text); margin-bottom: 6px;
+    }
+    .input-header p {
+      font-size: 11px; font-weight: 300; color: var(--text-dim); letter-spacing: 1px;
+    }
+
+    .scan-input-wrap {
+      position: relative; display: flex; align-items: center;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      transition: border-color 0.3s, box-shadow 0.3s;
+      overflow: hidden;
+    }
+    .scan-input-wrap:focus-within {
+      border-color: var(--border-hi);
+      box-shadow: 0 0 40px rgba(77,166,255,0.08);
+    }
+    .scan-input-wrap::before {
+      content: '';
+      position: absolute; top: 0; left: 0;
+      height: 1px; width: 0%;
+      background: var(--blue);
+      transition: width 0.6s ease;
+    }
+    .scan-input-wrap.scanning::before { width: 100%; animation: scanline 2s ease-in-out infinite; }
+    @keyframes scanline {
+      0%   { left: 0;    width: 30%; opacity: 1; }
+      50%  { left: 70%;  width: 30%; opacity: 1; }
+      100% { left: 100%; width: 0%;  opacity: 0; }
+    }
+
+    .target-badge {
+      padding: 0 16px;
+      font-size: 8px; letter-spacing: 4px; color: var(--blue-dim);
+      text-transform: uppercase; font-family: var(--mono);
+      white-space: nowrap; border-right: 1px solid var(--border);
+      height: 56px; display: flex; align-items: center;
+      min-width: 90px;
+    }
+
+    #target-input {
+      flex: 1; height: 56px;
+      background: transparent; border: none; outline: none;
+      color: var(--text); font-family: var(--mono); font-size: 14px;
+      padding: 0 20px; letter-spacing: 0.5px;
+    }
+    #target-input::placeholder { color: var(--text-mute); }
+
+    #scan-btn {
+      height: 56px; padding: 0 32px;
+      background: transparent;
+      border: none; border-left: 1px solid var(--border);
+      color: var(--blue); font-family: 'Inter', sans-serif;
+      font-size: 9px; font-weight: 400; letter-spacing: 6px;
+      text-transform: uppercase; cursor: pointer;
+      transition: background 0.3s, color 0.3s;
+      white-space: nowrap;
+    }
+    #scan-btn:hover:not(:disabled) { background: var(--blue-glow); }
+    #scan-btn:disabled { color: var(--text-mute); cursor: not-allowed; }
+
+    .input-tags {
+      display: flex; gap: 12px; margin-top: 14px;
+    }
+    .tag {
+      font-size: 9px; letter-spacing: 3px; color: var(--text-mute);
+      text-transform: uppercase; font-family: var(--mono);
+      cursor: pointer; transition: color 0.2s;
+    }
+    .tag:hover { color: var(--blue-dim); }
+    .tag::before { content: '› '; }
+
+    /* ─── MAIN LAYOUT ──────────────────────── */
+    .main-layout {
+      display: grid; grid-template-columns: 260px 1fr;
+      gap: 0; max-width: 1100px; margin: 0 auto;
+      padding: 0 40px 60px;
+      min-height: calc(100vh - 200px);
+    }
+
+    /* ─── LEFT SIDEBAR ─────────────────────── */
+    .sidebar {
+      padding: 0 32px 0 0;
+      border-right: 1px solid var(--border);
+    }
+
+    .sidebar-section { margin-bottom: 40px; }
+    .sidebar-label {
+      font-size: 8px; letter-spacing: 5px; color: var(--text-mute);
+      text-transform: uppercase; margin-bottom: 20px;
+      padding-bottom: 10px; border-bottom: 1px solid var(--border);
+    }
+
+    /* Phase list */
+    .phase-list { display: flex; flex-direction: column; gap: 4px; }
+
+    .phase-item {
+      display: flex; align-items: center; gap: 12px;
+      padding: 9px 12px;
+      font-size: 11px; font-weight: 300; color: var(--text-mute);
+      font-family: var(--mono); letter-spacing: 0.5px;
+      transition: all 0.3s ease;
+      position: relative;
+    }
+    .phase-item.active { color: var(--blue); }
+    .phase-item.done   { color: rgba(255,255,255,0.55); }
+    .phase-item.done::after {
+      content: '✓';
+      position: absolute; right: 12px;
+      font-size: 9px; color: var(--green);
+    }
+    .phase-item.error::after {
+      content: '✗';
+      position: absolute; right: 12px;
+      font-size: 9px; color: var(--red);
+    }
+
+    .phase-dot {
+      width: 5px; height: 5px; border-radius: 50%;
+      border: 1px solid currentColor; flex-shrink: 0;
+      transition: all 0.3s;
+    }
+    .phase-item.active .phase-dot {
+      background: var(--blue); border-color: var(--blue);
+      box-shadow: 0 0 8px var(--blue);
+      animation: pulse-dot 1s infinite;
+    }
+    .phase-item.done .phase-dot { background: rgba(255,255,255,0.3); border-color: rgba(255,255,255,0.3); }
+    @keyframes pulse-dot { 0%,100%{transform:scale(1)} 50%{transform:scale(1.4)} }
+
+    /* Risk gauge */
+    .gauge-wrap {
+      display: flex; flex-direction: column; align-items: center;
+      padding: 16px 0;
+    }
+    .gauge-svg { width: 140px; height: 80px; }
+    .gauge-score {
+      font-family: var(--mono); font-size: 32px; font-weight: 300;
+      text-align: center; margin-top: 8px; color: var(--text);
+      transition: color 0.5s;
+    }
+    .gauge-level {
+      font-size: 8px; letter-spacing: 5px; text-transform: uppercase;
+      color: var(--text-mute); text-align: center; margin-top: 4px;
+      transition: color 0.5s;
+    }
+    .gauge-desc {
+      font-size: 10px; color: var(--text-mute); text-align: center;
+      margin-top: 10px; line-height: 1.6; font-weight: 300;
+    }
+
+    /* Findings count pills */
+    .severity-pills { display: flex; flex-direction: column; gap: 8px; }
+    .pill {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 8px 12px;
+      background: var(--surface); border: 1px solid var(--border);
+      font-size: 10px; font-family: var(--mono);
+      transition: border-color 0.3s;
+    }
+    .pill-label { letter-spacing: 2px; text-transform: uppercase; }
+    .pill-count {
+      font-weight: 500; font-size: 13px;
+      min-width: 20px; text-align: right;
+    }
+    .pill.critical { border-color: rgba(255,77,106,0.25); }
+    .pill.critical .pill-label { color: var(--red); }
+    .pill.critical .pill-count { color: var(--red); }
+    .pill.high { border-color: rgba(255,140,66,0.2); }
+    .pill.high .pill-label { color: var(--orange); }
+    .pill.high .pill-count { color: var(--orange); }
+    .pill.medium { border-color: rgba(255,209,102,0.2); }
+    .pill.medium .pill-label { color: var(--yellow); }
+    .pill.medium .pill-count { color: var(--yellow); }
+    .pill.low { border-color: rgba(6,214,160,0.15); }
+    .pill.low .pill-label { color: var(--green); }
+    .pill.low .pill-count { color: var(--green); }
+
+    /* ─── RESULTS AREA ─────────────────────── */
+    .results-area { padding-left: 36px; padding-top: 2px; }
+
+    /* Empty state */
+    .empty-state {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; min-height: 400px;
+      color: var(--text-mute); text-align: center;
+    }
+    .empty-icon {
+      font-size: 28px; margin-bottom: 16px; opacity: 0.4;
+    }
+    .empty-state p {
+      font-size: 11px; letter-spacing: 3px; text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+    .empty-state span {
+      font-size: 10px; font-family: var(--mono); color: var(--text-mute);
+      opacity: 0.6;
+    }
+
+    /* Result card */
+    .result-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      margin-bottom: 12px;
+      opacity: 0; transform: translateY(10px);
+      transition: opacity 0.5s ease, transform 0.5s ease, border-color 0.3s;
+      overflow: hidden;
+    }
+    .result-card.show { opacity: 1; transform: translateY(0); }
+    .result-card:hover { border-color: rgba(77,166,255,0.22); }
+
+    .card-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+    }
+    .card-header-left { display: flex; align-items: center; gap: 12px; }
+    .card-title {
+      font-size: 10px; letter-spacing: 4px; text-transform: uppercase;
+      color: var(--text); font-weight: 400;
+    }
+    .card-badge {
+      font-size: 8px; letter-spacing: 3px; text-transform: uppercase;
+      padding: 2px 8px; border: 1px solid;
+      font-family: var(--mono);
+    }
+    .card-badge.ok     { color: var(--green);  border-color: rgba(6,214,160,0.3);  }
+    .card-badge.warn   { color: var(--yellow); border-color: rgba(255,209,102,0.3); }
+    .card-badge.danger { color: var(--red);    border-color: rgba(255,77,106,0.3);  }
+    .card-chevron {
+      color: var(--text-mute); font-size: 10px;
+      transition: transform 0.3s;
+    }
+    .card-header.collapsed .card-chevron { transform: rotate(-90deg); }
+
+    .card-body { padding: 20px; }
+
+    /* KV rows */
+    .kv-row {
+      display: flex; align-items: flex-start; gap: 16px;
+      padding: 7px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      font-size: 11px;
+    }
+    .kv-row:last-child { border-bottom: none; }
+    .kv-key {
+      font-family: var(--mono); color: var(--text-mute);
+      min-width: 160px; letter-spacing: 0.5px; font-size: 10px; flex-shrink: 0;
+    }
+    .kv-val { font-family: var(--mono); color: var(--text); word-break: break-all; line-height: 1.6; }
+    .kv-val.ok     { color: var(--green); }
+    .kv-val.warn   { color: var(--yellow); }
+    .kv-val.danger { color: var(--red); }
+
+    /* Tags */
+    .tag-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+    .chip {
+      font-family: var(--mono); font-size: 9px; letter-spacing: 1px;
+      padding: 3px 10px; border: 1px solid var(--border);
+      color: var(--blue-dim); background: var(--blue-glow);
+    }
+    .chip.risky { color: var(--orange); border-color: rgba(255,140,66,0.3); background: rgba(255,140,66,0.06); }
+    .chip.safe  { color: var(--green);  border-color: rgba(6,214,160,0.25);  background: rgba(6,214,160,0.05); }
+
+    /* Header check rows */
+    .header-row {
+      display: flex; align-items: center; gap: 12px;
+      padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.04);
+      font-size: 11px; font-family: var(--mono);
+    }
+    .header-row:last-child { border-bottom: none; }
+    .header-check { width: 14px; text-align: center; flex-shrink: 0; }
+    .header-name { color: var(--text); min-width: 200px; }
+    .header-desc { color: var(--text-mute); font-size: 9px; }
+
+    /* Port grid */
+    .port-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+    .port-item {
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.015);
+      font-family: var(--mono);
+    }
+    .port-num { font-size: 14px; font-weight: 400; color: var(--text); }
+    .port-name { font-size: 9px; color: var(--text-mute); letter-spacing: 1px; margin-top: 2px; }
+    .port-state {
+      font-size: 8px; letter-spacing: 2px; text-transform: uppercase;
+      margin-top: 6px;
+    }
+    .port-state.open   { color: var(--green); }
+    .port-state.risky  { color: var(--red); }
+    .port-state.closed { color: var(--text-mute); }
+
+    /* Subdomain list */
+    .sub-list { display: flex; flex-direction: column; gap: 6px; }
+    .sub-item {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 8px 12px; background: rgba(255,255,255,0.015);
+      border: 1px solid var(--border); font-family: var(--mono); font-size: 11px;
+    }
+    .sub-host { color: var(--blue-dim); }
+    .sub-ip   { color: var(--text-mute); font-size: 9px; }
+
+    /* Findings */
+    .finding {
+      display: flex; align-items: flex-start; gap: 14px;
+      padding: 14px 0; border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+    .finding:last-child { border-bottom: none; }
+    .finding-sev {
+      font-size: 7px; letter-spacing: 3px; text-transform: uppercase;
+      padding: 3px 8px; border: 1px solid; font-family: var(--mono);
+      white-space: nowrap; margin-top: 1px; flex-shrink: 0;
+    }
+    .finding-sev.critical { color: var(--red);    border-color: rgba(255,77,106,0.4); }
+    .finding-sev.high     { color: var(--orange); border-color: rgba(255,140,66,0.4); }
+    .finding-sev.medium   { color: var(--yellow); border-color: rgba(255,209,102,0.4); }
+    .finding-sev.low      { color: var(--green);  border-color: rgba(6,214,160,0.3); }
+    .finding-body h4 { font-size: 12px; font-weight: 400; color: var(--text); margin-bottom: 4px; }
+    .finding-body p  { font-size: 10px; color: var(--text-mute); line-height: 1.6; font-weight: 300; }
+
+    /* Secrets */
+    .secret-item {
+      padding: 12px; background: rgba(255,77,106,0.04);
+      border: 1px solid rgba(255,77,106,0.2); margin-bottom: 8px;
+    }
+    .secret-item h4 { font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--red); font-family: var(--mono); margin-bottom: 6px; }
+    .secret-item .file { font-size: 10px; color: var(--text-mute); font-family: var(--mono); margin-bottom: 4px; }
+    .secret-item .match { font-size: 10px; color: var(--text); font-family: var(--mono); background: rgba(255,255,255,0.04); padding: 6px 10px; word-break: break-all; }
+
+    /* Demo banner */
+    .demo-banner {
+      display: none;
+      padding: 10px 20px;
+      background: rgba(255,209,102,0.06); border: 1px solid rgba(255,209,102,0.2);
+      font-size: 9px; letter-spacing: 3px; text-transform: uppercase;
+      color: var(--yellow); text-align: center; font-family: var(--mono);
+      margin-bottom: 20px;
+    }
+    .demo-banner.show { display: block; }
+
+    /* AI Insight box */
+    .ai-insight {
+      margin: 0 20px 16px;
+      padding: 14px 16px;
+      background: rgba(77,166,255,0.04);
+      border: 1px solid rgba(77,166,255,0.12);
+      border-top: none;
+      display: flex; gap: 12px; align-items: flex-start;
+      opacity: 0; transition: opacity 0.5s ease;
+    }
+    .ai-insight.show { opacity: 1; }
+    .ai-label {
+      font-size: 7px; letter-spacing: 3px; text-transform: uppercase;
+      color: rgba(77,166,255,0.6); font-family: var(--mono);
+      white-space: nowrap; margin-top: 2px; flex-shrink: 0;
+      border: 1px solid rgba(77,166,255,0.2); padding: 2px 6px;
+    }
+    .ai-text {
+      font-size: 11px; color: rgba(255,255,255,0.5); line-height: 1.7;
+      font-weight: 300; font-style: italic;
+    }
+    .ai-cursor {
+      display: inline-block; width: 1px; height: 12px;
+      background: rgba(77,166,255,0.7); vertical-align: middle;
+      animation: blink-cursor 0.8s step-end infinite; margin-left: 1px;
+    }
+    @keyframes blink-cursor { 0%,100%{opacity:1} 50%{opacity:0} }
+
+    /* Report button */
+    .report-wrap {
+      display: none; margin: 28px 0 8px;
+      padding: 20px; background: rgba(77,166,255,0.04);
+      border: 1px solid rgba(77,166,255,0.2);
+      align-items: center; justify-content: space-between;
+      gap: 20px;
+    }
+    .report-wrap.show { display: flex; }
+    .report-wrap p {
+      font-size: 11px; color: rgba(255,255,255,0.45);
+      font-weight: 300; line-height: 1.6;
+    }
+    .report-wrap p strong { color: rgba(255,255,255,0.8); font-weight: 400; }
+    #report-btn {
+      flex-shrink: 0;
+      background: transparent; border: 1px solid rgba(77,166,255,0.4);
+      color: var(--blue); font-family: 'Inter',sans-serif;
+      font-size: 9px; letter-spacing: 5px; text-transform: uppercase;
+      padding: 12px 28px; cursor: pointer; transition: all 0.3s; white-space: nowrap;
+    }
+    #report-btn:hover { background: rgba(77,166,255,0.1); border-color: var(--blue); }
+    #report-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* ── Attack Probability ─────────────────────── */
+    .ap-intro {
+      font-size: 9px; font-weight: 300; color: var(--text-mute);
+      letter-spacing: 0.5px; line-height: 1.6; margin-bottom: 10px;
+    }
+    .ap-name {
+      font-size: 13px; font-weight: 400; letter-spacing: 0.5px;
+      margin-bottom: 14px; line-height: 1.3;
+    }
+    .ap-name.critical { color: var(--red); }
+    .ap-name.high     { color: var(--orange); }
+    .ap-name.medium   { color: var(--yellow); }
+
+    .ap-graphic {
+      width: 100%; margin-bottom: 14px;
+      display: flex; justify-content: center;
+      position: relative;
+    }
+    .ap-graphic svg { width: 100%; height: 80px; overflow: visible; }
+
+    /* Probability bar */
+    .ap-prob-row {
+      display: flex; align-items: center; gap: 10px; margin-bottom: 14px;
+    }
+    .ap-prob-label {
+      font-size: 8px; letter-spacing: 3px; text-transform: uppercase;
+      color: var(--text-mute); font-family: var(--mono); white-space: nowrap;
+    }
+    .ap-prob-bar-wrap {
+      flex: 1; height: 2px; background: rgba(255,255,255,0.07);
+    }
+    .ap-prob-bar {
+      height: 100%; width: 0; transition: width 1.4s cubic-bezier(0.4,0,0.2,1);
+    }
+    .ap-prob-num {
+      font-family: var(--mono); font-size: 11px; font-weight: 400;
+      white-space: nowrap;
+    }
+
+    .ap-reason {
+      font-size: 10px; color: var(--text-dim); line-height: 1.7;
+      font-weight: 300; margin-bottom: 10px;
+      padding: 10px 12px;
+      background: rgba(255,255,255,0.02);
+      border-left: 2px solid rgba(255,255,255,0.08);
+    }
+    .ap-reason strong { color: rgba(255,255,255,0.65); font-weight: 400; }
+
+    .ap-scroll-hint {
+      font-size: 8px; letter-spacing: 2px; color: var(--text-mute);
+      text-transform: uppercase; line-height: 1.7; text-align: center;
+      padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.05);
+      cursor: pointer; transition: color 0.2s;
+      font-family: var(--mono);
+    }
+    .ap-scroll-hint:hover { color: var(--blue-dim); }
+    .ap-scroll-hint span { display: block; font-size: 12px; margin-bottom: 2px; opacity: 0.5; animation: bob 2s ease-in-out infinite; }
+    @keyframes bob { 0%,100%{transform:translateY(0)} 50%{transform:translateY(3px)} }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(77,166,255,0.2); }
+  </style>
+</head>
+<body>
+
+  <!-- NAV -->
+  <nav>
+    <a href="index.html" class="nav-brand">← Sentinel</a>
+    <span class="nav-module">Attack Surface Monitor</span>
+    <div class="nav-status">
+      <div class="status-dot" id="status-dot"></div>
+      <span id="status-text">Ready</span>
+    </div>
+  </nav>
+
+  <!-- INPUT -->
+  <div class="input-section">
+    <div class="input-header">
+      <h1>Target Reconnaissance</h1>
+      <p>Enter a domain, IP address, or GitHub repository URL to begin surface analysis</p>
+    </div>
+    <div class="scan-input-wrap" id="input-wrap">
+      <div class="target-badge" id="target-badge">Domain</div>
+      <input type="text" id="target-input" placeholder="example.com  ·  192.168.1.1  ·  github.com/user/repo" autocomplete="off" spellcheck="false" />
+      <button id="scan-btn">Initiate Scan</button>
+    </div>
+    <div class="input-tags">
+      <span class="tag" onclick="setExample('scanme.nmap.org')">scanme.nmap.org</span>
+      <span class="tag" onclick="setExample('github.com/torvalds/linux')">github.com/torvalds/linux</span>
+      <span class="tag" onclick="setExample('8.8.8.8')">8.8.8.8</span>
+    </div>
+  </div>
+
+  <!-- MAIN -->
+  <div class="main-layout">
+
+    <!-- SIDEBAR -->
+    <div class="sidebar">
+
+      <div class="sidebar-section">
+        <div class="sidebar-label">Scan Phases</div>
+        <div class="phase-list" id="phase-list">
+          <div class="phase-item" id="ph-whois">
+            <div class="phase-dot"></div> WHOIS
+          </div>
+          <div class="phase-item" id="ph-dns">
+            <div class="phase-dot"></div> DNS Records
+          </div>
+          <div class="phase-item" id="ph-ssl">
+            <div class="phase-dot"></div> SSL / TLS
+          </div>
+          <div class="phase-item" id="ph-headers">
+            <div class="phase-dot"></div> HTTP Headers
+          </div>
+          <div class="phase-item" id="ph-subs">
+            <div class="phase-dot"></div> Subdomains
+          </div>
+          <div class="phase-item" id="ph-ports">
+            <div class="phase-dot"></div> Port Scan
+          </div>
+          <div class="phase-item" id="ph-github" style="display:none">
+            <div class="phase-dot"></div> GitHub Secrets
+          </div>
+        </div>
+      </div>
+
+      <div class="sidebar-section" id="gauge-section" style="display:none">
+        <div class="sidebar-label">Risk Score</div>
+        <div class="gauge-wrap">
+          <svg class="gauge-svg" viewBox="0 0 140 80">
+            <defs>
+              <linearGradient id="gaugeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%"   stop-color="#06d6a0"/>
+                <stop offset="40%"  stop-color="#ffd166"/>
+                <stop offset="70%"  stop-color="#ff8c42"/>
+                <stop offset="100%" stop-color="#ff4d6a"/>
+              </linearGradient>
+            </defs>
+            <!-- Track -->
+            <path d="M 14 74 A 56 56 0 0 1 126 74" fill="none" stroke="rgba(255,255,255,0.07)" stroke-width="6" stroke-linecap="round"/>
+            <!-- Fill -->
+            <path id="gauge-fill" d="M 14 74 A 56 56 0 0 1 126 74" fill="none" stroke="url(#gaugeGrad)" stroke-width="6" stroke-linecap="round"
+              stroke-dasharray="175" stroke-dashoffset="175" style="transition: stroke-dashoffset 1.2s cubic-bezier(0.4,0,0.2,1)"/>
+            <!-- Needle -->
+            <circle id="gauge-needle" cx="14" cy="74" r="4" fill="white" opacity="0" style="transition: all 1.2s cubic-bezier(0.4,0,0.2,1)"/>
+          </svg>
+          <div class="gauge-score" id="gauge-score">—</div>
+          <div class="gauge-level" id="gauge-level">Awaiting Scan</div>
+          <div class="gauge-desc" id="gauge-desc">Run a scan to see your attack surface risk score</div>
+        </div>
+      </div>
+
+      <div class="sidebar-section" id="pills-section" style="display:none">
+        <div class="sidebar-label">Findings</div>
+        <div class="severity-pills">
+          <div class="pill critical"><span class="pill-label">Critical</span><span class="pill-count" id="cnt-critical">0</span></div>
+          <div class="pill high">   <span class="pill-label">High</span>    <span class="pill-count" id="cnt-high">0</span></div>
+          <div class="pill medium"> <span class="pill-label">Medium</span>  <span class="pill-count" id="cnt-medium">0</span></div>
+          <div class="pill low">    <span class="pill-label">Low</span>     <span class="pill-count" id="cnt-low">0</span></div>
+        </div>
+      </div>
+
+      <!-- ── ATTACK PROBABILITY ─────────────────── -->
+      <div class="sidebar-section" id="attack-prob-section" style="display:none">
+        <div class="sidebar-label">Attack Probability</div>
+        <div id="attack-prob-body">
+          <!-- filled by JS -->
+        </div>
+      </div>
+
+    </div>
+
+    <!-- RESULTS -->
+    <div class="results-area" id="results-area">
+      <div class="demo-banner" id="demo-banner">⚡ Demo Mode — Backend offline. Showing simulated scan data.</div>
+
+      <div class="report-wrap" id="report-wrap">
+        <p><strong>AI Report Ready</strong><br>Claude Sonnet has analyzed all scan results. Generate a professional penetration test report with executive summary, detailed findings, and remediation roadmap.</p>
+        <button id="report-btn">Generate Report ↗</button>
+      </div>
+
+      <div class="empty-state" id="empty-state">
+        <div class="empty-icon">◎</div>
+        <p>No scan active</p>
+        <span>Enter a target above to begin reconnaissance</span>
+      </div>
+    </div>
+
+  </div><!-- /main-layout -->
+
+  <script>
+  // ═══════════════════════════════════════════
+  // CONFIG
+  // ═══════════════════════════════════════════
+  const BACKEND = (typeof SENTINEL_CONFIG !== 'undefined') ? SENTINEL_CONFIG.BACKEND : 'http://localhost:8000';
+  const DEMO_DELAY = 1800; // ms to wait before falling back to demo
+
+  // ═══════════════════════════════════════════
+  // STATE
+  // ═══════════════════════════════════════════
+  let scanning = false;
+  let findings = { critical: 0, high: 0, medium: 0, low: 0 };
+  let currentTarget = '';
+  let isGithub = false;
+  let allScanData = {};   // accumulate results for report
+  let backendOnline = false;
+
+  // ═══════════════════════════════════════════
+  // UTILS
+  // ═══════════════════════════════════════════
+  function detectTargetType(val) {
+    val = val.trim();
+    if (val.includes('github.com')) return 'GitHub';
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(val)) return 'IP';
+    return 'Domain';
+  }
+
+  function setExample(val) {
+    document.getElementById('target-input').value = val;
+    document.getElementById('target-badge').textContent = detectTargetType(val);
+  }
+
+  document.getElementById('target-input').addEventListener('input', function() {
+    document.getElementById('target-badge').textContent = detectTargetType(this.value);
+  });
+
+  function setStatus(text, state) {
+    document.getElementById('status-text').textContent = text;
+    const dot = document.getElementById('status-dot');
+    dot.className = 'status-dot' + (state ? ' ' + state : '');
+  }
+
+  function setPhase(id, state) {
+    const el = document.getElementById('ph-' + id);
+    if (!el) return;
+    el.className = 'phase-item ' + state;
+    if (state === 'active') el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  function clearResults() {
+    const area = document.getElementById('results-area');
+    area.innerHTML = `
+      <div class="demo-banner" id="demo-banner"></div>
+      <div class="report-wrap" id="report-wrap">
+        <p><strong>AI Report Ready</strong><br>Claude Sonnet has analyzed all scan results. Generate a professional penetration test report with executive summary, detailed findings, and remediation roadmap.</p>
+        <button id="report-btn">Generate Report ↗</button>
+      </div>
+    `;
+    document.getElementById('report-btn').addEventListener('click', generateReport);
+    findings = { critical: 0, high: 0, medium: 0, low: 0 };
+    allScanData = {};
+    updatePills();
+    document.getElementById('gauge-section').style.display = 'none';
+    document.getElementById('pills-section').style.display = 'none';
+    document.getElementById('attack-prob-section').style.display = 'none';
+    document.getElementById('attack-prob-body').innerHTML = '';
+    ['whois','dns','ssl','headers','subs','ports','github'].forEach(p => setPhase(p, ''));
+  }
+
+  function addFinding(sev) {
+    if (findings[sev] !== undefined) findings[sev]++;
+    updatePills();
+  }
+
+  function updatePills() {
+    document.getElementById('cnt-critical').textContent = findings.critical;
+    document.getElementById('cnt-high').textContent     = findings.high;
+    document.getElementById('cnt-medium').textContent   = findings.medium;
+    document.getElementById('cnt-low').textContent      = findings.low;
+  }
+
+  // ═══════════════════════════════════════════
+  // AI INSIGHT
+  // ═══════════════════════════════════════════
+  async function fetchAiInsight(phase, data) {
+    if (!backendOnline) return; // only in real mode
+    try {
+      const res = await fetch(`${BACKEND}/ai-insight?phase=${phase}&target=${encodeURIComponent(currentTarget)}&data=${encodeURIComponent(JSON.stringify(data))}`);
+      if (!res.ok) return;
+
+      const insightEl = document.getElementById('ai-' + phase);
+      const textEl = insightEl?.querySelector('.ai-text');
+      if (!insightEl || !textEl) return;
+
+      // Show cursor, stream text
+      textEl.innerHTML = '<span class="ai-cursor"></span>';
+      insightEl.classList.add('show');
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let text = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        text += decoder.decode(value, { stream: true });
+        textEl.innerHTML = text + '<span class="ai-cursor"></span>';
+      }
+      // Remove cursor at end
+      textEl.innerHTML = text;
+    } catch (e) { /* silent fail */ }
+  }
+
+  // ═══════════════════════════════════════════
+  // CARD BUILDER
+  // ═══════════════════════════════════════════
+  function makeCard(id, title, badge, badgeClass, bodyHtml) {
+    const area = document.getElementById('results-area');
+    const card = document.createElement('div');
+    card.className = 'result-card';
+    card.id = 'card-' + id;
+    card.innerHTML = `
+      <div class="card-header" onclick="toggleCard(this)">
+        <div class="card-header-left">
+          <span class="card-title">${title}</span>
+          <span class="card-badge ${badgeClass}">${badge}</span>
+        </div>
+        <span class="card-chevron">▾</span>
+      </div>
+      <div class="card-body">${bodyHtml}</div>
+    `;
+    // Insert before report-wrap
+    const reportWrap = document.getElementById('report-wrap');
+    area.insertBefore(card, reportWrap);
+
+    // AI insight placeholder
+    const insight = document.createElement('div');
+    insight.className = 'ai-insight';
+    insight.id = 'ai-' + id;
+    insight.innerHTML = `<span class="ai-label">AI</span><span class="ai-text"></span>`;
+    area.insertBefore(insight, reportWrap);
+
+    requestAnimationFrame(() => requestAnimationFrame(() => card.classList.add('show')));
+  }
+
+  function toggleCard(header) {
+    const body = header.nextElementSibling;
+    const collapsed = header.classList.toggle('collapsed');
+    body.style.display = collapsed ? 'none' : 'block';
+  }
+
+  function kv(key, val, cls = '') {
+    return `<div class="kv-row"><span class="kv-key">${key}</span><span class="kv-val ${cls}">${val}</span></div>`;
+  }
+
+  // ═══════════════════════════════════════════
+  // RISK GAUGE
+  // ═══════════════════════════════════════════
+  function setRiskScore(score) {
+    document.getElementById('gauge-section').style.display = 'block';
+    document.getElementById('pills-section').style.display = 'block';
+
+    const fill   = document.getElementById('gauge-fill');
+    const needle = document.getElementById('gauge-needle');
+    const scoreEl = document.getElementById('gauge-score');
+    const levelEl = document.getElementById('gauge-level');
+    const descEl  = document.getElementById('gauge-desc');
+
+    const pct = score / 100;
+    const arcLen = 175;
+    fill.style.strokeDashoffset = arcLen - (arcLen * pct);
+
+    // Needle position along arc (180° semicircle)
+    const angle = -180 + (pct * 180);
+    const rad = angle * Math.PI / 180;
+    const cx = 70 + 56 * Math.cos(rad);
+    const cy = 74 + 56 * Math.sin(rad);
+    needle.setAttribute('cx', cx);
+    needle.setAttribute('cy', cy);
+    needle.setAttribute('opacity', '1');
+
+    // Animate score number
+    let current = 0;
+    const step = score / 40;
+    const timer = setInterval(() => {
+      current = Math.min(current + step, score);
+      scoreEl.textContent = Math.round(current);
+      if (current >= score) clearInterval(timer);
+    }, 25);
+
+    // Level
+    let level, color, desc;
+    if (score >= 80)      { level = 'Critical'; color = '#ff4d6a'; desc = 'Immediate action required. Multiple high-severity exposures detected.'; }
+    else if (score >= 60) { level = 'High';     color = '#ff8c42'; desc = 'Significant attack surface. Address findings promptly.'; }
+    else if (score >= 35) { level = 'Medium';   color = '#ffd166'; desc = 'Moderate exposure. Review and remediate flagged issues.'; }
+    else                  { level = 'Low';      color = '#06d6a0'; desc = 'Minimal exposure detected. Maintain current posture.'; }
+
+    levelEl.textContent = level;
+    levelEl.style.color = color;
+    scoreEl.style.color = color;
+    descEl.textContent  = desc;
+  }
+
+  // ═══════════════════════════════════════════
+  // RENDER FUNCTIONS (real + demo share these)
+  // ═══════════════════════════════════════════
+
+  function renderWhois(d) {
+    allScanData.whois = d;
+    setPhase('whois', 'done');
+    const body = `
+      ${kv('Registrar',    d.registrar || 'N/A')}
+      ${kv('Registered',   d.created   || 'N/A')}
+      ${kv('Expires',      d.expires   || 'N/A')}
+      ${kv('Updated',      d.updated   || 'N/A')}
+      ${kv('Registrant',   d.registrant || 'Private / Redacted')}
+      ${kv('Name Servers', (d.nameservers || []).join('<br>') || 'N/A')}
+    `;
+    makeCard('whois', 'WHOIS', 'Info', 'ok', body);
+    setTimeout(() => fetchAiInsight('whois', d), 400);
+  }
+
+  function renderDns(d) {
+    allScanData.dns = d;
+    setPhase('dns', 'done');
+    let body = '';
+    if (d.A)     body += kv('A',     d.A.join('<br>'));
+    if (d.AAAA)  body += kv('AAAA',  d.AAAA.join('<br>'));
+    if (d.MX)    body += kv('MX',    d.MX.join('<br>'));
+    if (d.NS)    body += kv('NS',    d.NS.join('<br>'));
+    if (d.TXT)   body += kv('TXT',   `<span style="word-break:break-all">${d.TXT.join('<br>')}</span>`);
+    if (d.CNAME) body += kv('CNAME', d.CNAME.join('<br>'));
+    if (d.dnssec === false) {
+      body += kv('DNSSEC', '<span class="warn">Not configured</span>');
+      addFinding('low');
+    } else if (d.dnssec) {
+      body += kv('DNSSEC', '<span class="ok">Enabled</span>');
+    }
+    makeCard('dns', 'DNS Records', Object.keys(d).filter(k=>k!=='dnssec').length + ' records', 'ok', body);
+    setTimeout(() => fetchAiInsight('dns', d), 400);
+  }
+
+  function renderSsl(d) {
+    allScanData.ssl = d;
+    setPhase('ssl', 'done');
+    let badgeClass = 'ok', badge = 'Valid';
+    if (!d.valid) { badge = 'Invalid'; badgeClass = 'danger'; addFinding('critical'); }
+    else if (d.days_left < 30) { badge = 'Expiring'; badgeClass = 'warn'; addFinding('medium'); }
+
+    const daysColor = d.days_left < 30 ? 'warn' : d.days_left < 7 ? 'danger' : 'ok';
+    const protoColor = d.protocol === 'TLSv1.3' ? 'ok' : d.protocol === 'TLSv1.2' ? '' : 'danger';
+
+    const body = `
+      ${kv('Status',    d.valid ? '<span class="ok">Valid</span>' : '<span class="danger">Invalid / Self-signed</span>')}
+      ${kv('Subject',   d.subject || 'N/A')}
+      ${kv('Issuer',    d.issuer  || 'N/A')}
+      ${kv('Expires',   d.expires || 'N/A')}
+      ${kv('Days Left', `<span class="${daysColor}">${d.days_left} days</span>`)}
+      ${kv('Protocol',  `<span class="${protoColor}">${d.protocol || 'N/A'}</span>`)}
+      ${kv('Cipher',    d.cipher || 'N/A')}
+    `;
+    makeCard('ssl', 'SSL / TLS Certificate', badge, badgeClass, body);
+    setTimeout(() => fetchAiInsight('ssl', d), 400);
+  }
+
+  function renderHeaders(d) {
+    allScanData.headers = d;
+    setPhase('headers', 'done');
+    const secHeaders = [
+      { name: 'Strict-Transport-Security', desc: 'Enforces HTTPS connections', sev: 'high' },
+      { name: 'Content-Security-Policy',   desc: 'Mitigates XSS attacks', sev: 'high' },
+      { name: 'X-Frame-Options',           desc: 'Prevents clickjacking', sev: 'medium' },
+      { name: 'X-Content-Type-Options',    desc: 'Prevents MIME sniffing', sev: 'low' },
+      { name: 'Referrer-Policy',           desc: 'Controls referrer info', sev: 'low' },
+      { name: 'Permissions-Policy',        desc: 'Restricts browser features', sev: 'low' },
+    ];
+
+    let missing = 0;
+    let rows = '';
+    secHeaders.forEach(h => {
+      const present = d.present && d.present.includes(h.name);
+      if (!present) { missing++; addFinding(h.sev); }
+      rows += `
+        <div class="header-row">
+          <span class="header-check">${present ? '<span style="color:var(--green)">✓</span>' : '<span style="color:var(--red)">✗</span>'}</span>
+          <span class="header-name">${h.name}</span>
+          <span class="header-desc">${present ? '' : '— ' + h.desc}</span>
+        </div>
+      `;
+    });
+
+    // Also show raw headers
+    let rawRows = '';
+    if (d.all) {
+      Object.entries(d.all).slice(0, 10).forEach(([k, v]) => {
+        rawRows += kv(k, v);
+      });
+    }
+
+    const badge = missing === 0 ? 'All Present' : `${missing} Missing`;
+    const badgeClass = missing === 0 ? 'ok' : missing <= 2 ? 'warn' : 'danger';
+
+    const body = `
+      <div style="margin-bottom:16px">${rows}</div>
+      ${rawRows ? '<div style="margin-top:16px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.05)">' + rawRows + '</div>' : ''}
+    `;
+    makeCard('headers', 'HTTP Security Headers', badge, badgeClass, body);
+    setTimeout(() => fetchAiInsight('headers', d), 400);
+  }
+
+  function renderSubdomains(d) {
+    allScanData.subs = d;
+    setPhase('subs', 'done');
+    const found = d.found || [];
+    if (found.length === 0) {
+      makeCard('subs', 'Subdomain Discovery', 'None Found', 'ok',
+        '<div style="color:var(--text-mute);font-size:11px;font-family:var(--mono)">No common subdomains resolved.</div>');
+      return;
+    }
+    let rows = found.map(s => `
+      <div class="sub-item">
+        <span class="sub-host">${s.host}</span>
+        <span class="sub-ip">${s.ip || ''}</span>
+      </div>
+    `).join('');
+    makeCard('subs', 'Subdomain Discovery', `${found.length} Found`, found.length > 5 ? 'warn' : 'ok',
+      `<div class="sub-list">${rows}</div>`);
+    setTimeout(() => fetchAiInsight('subs', d), 400);
+  }
+
+  function renderPorts(d) {
+    allScanData.ports = d;
+    setPhase('ports', 'done');
+    const RISKY_PORTS = [21,23,3306,5432,6379,27017,9200,8080];
+    const ports = d.results || [];
+    let hasRisky = false;
+
+    const items = ports.map(p => {
+      const risky = p.state === 'open' && RISKY_PORTS.includes(p.port);
+      if (risky) { hasRisky = true; addFinding('high'); }
+      const stateClass = risky ? 'risky' : p.state === 'open' ? 'open' : 'closed';
+      return `
+        <div class="port-item">
+          <div class="port-num">${p.port}</div>
+          <div class="port-name">${p.service}</div>
+          <div class="port-state ${stateClass}">${risky ? '⚠ open' : p.state}</div>
+        </div>
+      `;
+    }).join('');
+
+    const badge = hasRisky ? 'Risky Ports Open' : ports.filter(p=>p.state==='open').length + ' Open';
+    const badgeClass = hasRisky ? 'danger' : 'ok';
+    makeCard('ports', 'Port Scan', badge, badgeClass, `<div class="port-grid">${items}</div>`);
+    setTimeout(() => fetchAiInsight('ports', d), 400);
+  }
+
+  function renderGithub(d) {
+    allScanData.github = d;
+    setPhase('github', 'done');
+    const secrets = d.secrets || [];
+    if (secrets.length === 0) {
+      makeCard('github', 'GitHub Secret Scan', 'Clean', 'ok',
+        '<div style="color:var(--text-mute);font-size:11px;font-family:var(--mono)">No exposed secrets detected in scanned files.</div>');
+      return;
+    }
+    secrets.forEach(() => addFinding('critical'));
+    const items = secrets.map(s => `
+      <div class="secret-item">
+        <h4>${s.type}</h4>
+        <div class="file">📄 ${s.file} : line ${s.line}</div>
+        <div class="match">${s.snippet}</div>
+      </div>
+    `).join('');
+    makeCard('github', 'GitHub Secret Scan', `${secrets.length} Exposed`, 'danger', items);
+    setTimeout(() => fetchAiInsight('github', d), 400);
+  }
+
+  function renderFindings() {
+    const all = [];
+    // Collect from DOM — this is populated by addFinding calls above
+    // Build a findings summary card
+    const total = Object.values(findings).reduce((a,b)=>a+b,0);
+    if (total === 0) return;
+
+    let score = Math.min(100,
+      findings.critical * 25 +
+      findings.high     * 15 +
+      findings.medium   *  8 +
+      findings.low      *  3
+    );
+    setRiskScore(score);
+  }
+
+  // ═══════════════════════════════════════════
+  // SCAN INITIATION
+  // ═══════════════════════════════════════════
+  document.getElementById('scan-btn').addEventListener('click', startScan);
+  document.getElementById('target-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') startScan();
+  });
+
+  function startScan() {
+    const target = document.getElementById('target-input').value.trim();
+    if (!target || scanning) return;
+
+    currentTarget = target;
+    isGithub = target.includes('github.com');
+
+    scanning = true;
+    document.getElementById('scan-btn').disabled = true;
+    document.getElementById('input-wrap').classList.add('scanning');
+    setStatus('Scanning', 'scanning');
+    clearResults();
+
+    // Show github phase if needed
+    document.getElementById('ph-github').style.display = isGithub ? 'flex' : 'none';
+
+    // Try real backend first, fallback to demo
+    let backendAlive = false;
+    const timeout = setTimeout(() => {
+      if (!backendAlive) runDemoScan(target);
+    }, DEMO_DELAY);
+
+    fetch(`${BACKEND}/ping`)
+      .then(r => r.ok ? (backendAlive = true, backendOnline = true, clearTimeout(timeout), runRealScan(target)) : Promise.reject())
+      .catch(() => {}); // demo fallback handles it
+  }
+
+  // ═══════════════════════════════════════
+  // ATTACK PROBABILITY GRAPHICS
+  // ═══════════════════════════════════════
+  const ATTACK_SVGS = {
+    mitm: (color) => `
+      <svg viewBox="0 0 220 80" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="28" cy="40" r="14" fill="none" stroke="${color}" stroke-width="1.2" opacity="0.7"/>
+        <text x="28" y="44" text-anchor="middle" font-size="11" fill="${color}" opacity="0.8">A</text>
+        <circle cx="192" cy="40" r="14" fill="none" stroke="${color}" stroke-width="1.2" opacity="0.7"/>
+        <text x="192" y="44" text-anchor="middle" font-size="11" fill="${color}" opacity="0.8">B</text>
+        <line x1="42" y1="40" x2="88" y2="40" stroke="rgba(255,255,255,0.15)" stroke-width="1" stroke-dasharray="4 3"/>
+        <line x1="132" y1="40" x2="178" y2="40" stroke="rgba(255,255,255,0.15)" stroke-width="1" stroke-dasharray="4 3"/>
+        <polygon points="110,24 126,40 110,56 94,40" fill="rgba(8,10,14,1)" stroke="${color}" stroke-width="1.5"/>
+        <text x="110" y="44" text-anchor="middle" font-size="10" fill="${color}">✦</text>
+        <circle r="3" fill="${color}" opacity="0.9"><animateMotion dur="1.8s" repeatCount="indefinite" path="M42,40 L88,40"/></circle>
+        <circle r="3" fill="${color}" opacity="0.9"><animateMotion dur="1.8s" begin="0.9s" repeatCount="indefinite" path="M42,40 L88,40"/></circle>
+        <text x="110" y="74" text-anchor="middle" font-size="8" fill="${color}" opacity="0.4" letter-spacing="2">INTERCEPTED</text>
+      </svg>`,
+
+    xss: (color) => `
+      <svg viewBox="0 0 220 80" xmlns="http://www.w3.org/2000/svg">
+        <rect x="20" y="10" width="180" height="55" rx="4" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+        <rect x="20" y="10" width="180" height="14" rx="4" fill="rgba(255,255,255,0.04)"/>
+        <circle cx="32" cy="17" r="3" fill="${color}" opacity="0.5"/>
+        <circle cx="44" cy="17" r="3" fill="${color}" opacity="0.3"/>
+        <circle cx="56" cy="17" r="3" fill="${color}" opacity="0.2"/>
+        <text x="110" y="46" text-anchor="middle" font-family="monospace" font-size="13" fill="${color}" opacity="0.85">&lt;script&gt;</text>
+        <text x="110" y="60" text-anchor="middle" font-family="monospace" font-size="9" fill="${color}" opacity="0.4">alert(document.cookie)</text>
+        <line x1="110" y1="65" x2="110" y2="80" stroke="${color}" stroke-width="1" opacity="0.3" stroke-dasharray="3 2"/>
+        <polygon points="106,78 114,78 110,84" fill="${color}" opacity="0.4"><animate attributeName="opacity" values="0.2;0.7;0.2" dur="1.5s" repeatCount="indefinite"/></polygon>
+      </svg>`,
+
+    sqli: (color) => `
+      <svg viewBox="0 0 220 80" xmlns="http://www.w3.org/2000/svg">
+        <ellipse cx="110" cy="58" rx="48" ry="12" fill="none" stroke="${color}" stroke-width="1.2" opacity="0.6"/>
+        <rect x="62" y="28" width="96" height="30" fill="rgba(8,10,14,0.9)" stroke="${color}" stroke-width="1.2" opacity="0.6"/>
+        <ellipse cx="110" cy="28" rx="48" ry="12" fill="rgba(8,10,14,1)" stroke="${color}" stroke-width="1.2" opacity="0.6"/>
+        <text x="110" y="48" text-anchor="middle" font-family="monospace" font-size="8.5" fill="${color}" opacity="0.85">'; DROP TABLE--</text>
+        <line x1="110" y1="16" x2="110" y2="0" stroke="${color}" stroke-width="1" opacity="0.3" stroke-dasharray="3 2"/>
+        <text x="110" y="10" text-anchor="middle" font-size="8" fill="${color}" opacity="0.5" letter-spacing="1">INJECTED</text>
+        <rect x="62" y="28" width="96" height="30" fill="${color}" opacity="0"><animate attributeName="opacity" values="0;0.06;0" dur="2s" repeatCount="indefinite"/></rect>
+      </svg>`,
+
+    bruteforce: (color) => `
+      <svg viewBox="0 0 220 80" xmlns="http://www.w3.org/2000/svg">
+        <rect x="88" y="34" width="44" height="34" rx="4" fill="none" stroke="${color}" stroke-width="1.5" opacity="0.8"/>
+        <path d="M96 34 Q96 14 110 14 Q124 14 124 34" fill="none" stroke="${color}" stroke-width="1.5" opacity="0.8"/>
+        <circle cx="110" cy="51" r="5" fill="${color}" opacity="0.6"/>
+        <line x1="110" y1="51" x2="110" y2="60" stroke="${color}" stroke-width="1.5" opacity="0.6"/>
+        <text x="40" y="30" font-family="monospace" font-size="8" fill="${color}" opacity="0.5">●●●●●●</text>
+        <text x="40" y="42" font-family="monospace" font-size="8" fill="${color}" opacity="0.35">admin123</text>
+        <text x="40" y="54" font-family="monospace" font-size="8" fill="${color}" opacity="0.2">qwerty99</text>
+        <line x1="78" y1="40" x2="88" y2="48" stroke="${color}" stroke-width="1" opacity="0.3" stroke-dasharray="3 2"/>
+        <text x="110" y="78" text-anchor="middle" font-size="8" fill="${color}" opacity="0.4" letter-spacing="2">BRUTE FORCE</text>
+      </svg>`,
+
+    subdomain: (color) => `
+      <svg viewBox="0 0 220 80" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="110" cy="36" r="16" fill="none" stroke="${color}" stroke-width="1.2" opacity="0.7"/>
+        <text x="110" y="40" text-anchor="middle" font-size="9" fill="${color}" opacity="0.8">main</text>
+        <circle cx="44" cy="24" r="11" fill="none" stroke="${color}" stroke-width="1" opacity="0.5"/>
+        <text x="44" y="28" text-anchor="middle" font-size="7" fill="${color}" opacity="0.6">dev</text>
+        <circle cx="176" cy="24" r="11" fill="none" stroke="${color}" stroke-width="1" opacity="0.5"/>
+        <text x="176" y="28" text-anchor="middle" font-size="7" fill="${color}" opacity="0.6">api</text>
+        <circle cx="60" cy="62" r="10" fill="none" stroke="${color}" stroke-width="1" opacity="0.4"/>
+        <text x="60" y="66" text-anchor="middle" font-size="7" fill="${color}" opacity="0.5">stg</text>
+        <circle cx="160" cy="62" r="10" fill="rgba(255,77,106,0.08)" stroke="var(--red)" stroke-width="1.5" opacity="0.9"/>
+        <text x="160" y="66" text-anchor="middle" font-size="7" fill="var(--red)" opacity="0.9">⚠</text>
+        <line x1="94" y1="30" x2="55" y2="26" stroke="${color}" stroke-width="0.8" opacity="0.3"/>
+        <line x1="126" y1="30" x2="165" y2="26" stroke="${color}" stroke-width="0.8" opacity="0.3"/>
+        <line x1="100" y1="48" x2="68" y2="58" stroke="${color}" stroke-width="0.8" opacity="0.3"/>
+        <line x1="120" y1="48" x2="152" y2="58" stroke="${color}" stroke-width="0.8" opacity="0.3"/>
+      </svg>`,
+
+    sslstrip: (color) => `
+      <svg viewBox="0 0 220 80" xmlns="http://www.w3.org/2000/svg">
+        <rect x="18" y="28" width="72" height="28" rx="3" fill="none" stroke="${color}" stroke-width="1.2" opacity="0.7"/>
+        <text x="54" y="40" text-anchor="middle" font-family="monospace" font-size="8" fill="${color}" opacity="0.8">https://</text>
+        <text x="54" y="52" text-anchor="middle" font-size="7" fill="${color}" opacity="0.5">🔒 Secure</text>
+        <line x1="90" y1="42" x2="130" y2="42" stroke="rgba(255,255,255,0.15)" stroke-width="1" stroke-dasharray="4 3"/>
+        <text x="110" y="36" text-anchor="middle" font-size="10" fill="var(--red)">↯</text>
+        <rect x="130" y="28" width="72" height="28" rx="3" fill="none" stroke="var(--red)" stroke-width="1.2" opacity="0.8"/>
+        <text x="166" y="40" text-anchor="middle" font-family="monospace" font-size="8" fill="var(--red)" opacity="0.9">http://</text>
+        <text x="166" y="52" text-anchor="middle" font-size="7" fill="var(--red)" opacity="0.6">⚠ Stripped</text>
+        <text x="110" y="74" text-anchor="middle" font-size="8" fill="${color}" opacity="0.4" letter-spacing="1">SSL STRIPPED</text>
+      </svg>`,
+
+    clickjacking: (color) => `
+      <svg viewBox="0 0 220 80" xmlns="http://www.w3.org/2000/svg">
+        <rect x="50" y="12" width="120" height="56" rx="3" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+        <rect x="58" y="32" width="104" height="28" rx="2" fill="none" stroke="${color}" stroke-width="1" opacity="0.5" stroke-dasharray="3 2"/>
+        <rect x="62" y="36" width="96" height="20" rx="2" fill="rgba(255,77,106,0.08)" stroke="var(--red)" stroke-width="1" opacity="0.8"/>
+        <text x="110" y="50" text-anchor="middle" font-size="8" fill="var(--red)" opacity="0.8">HIDDEN FRAME</text>
+        <text x="110" y="22" text-anchor="middle" font-size="8" fill="${color}" opacity="0.5">legitimate-site.com</text>
+        <text x="110" y="73" text-anchor="middle" font-size="8" fill="${color}" opacity="0.4" letter-spacing="1">CLICKJACKING</text>
+      </svg>`,
+
+    dns: (color) => `
+      <svg viewBox="0 0 220 80" xmlns="http://www.w3.org/2000/svg">
+        <text x="110" y="20" text-anchor="middle" font-family="monospace" font-size="9" fill="${color}" opacity="0.7">target.com → ?</text>
+        <circle cx="60" cy="50" r="16" fill="none" stroke="${color}" stroke-width="1" opacity="0.6"/>
+        <text x="60" y="54" text-anchor="middle" font-size="7" fill="${color}" opacity="0.7">Real DNS</text>
+        <circle cx="160" cy="50" r="16" fill="rgba(255,77,106,0.06)" stroke="var(--red)" stroke-width="1.5" opacity="0.9"/>
+        <text x="160" y="48" text-anchor="middle" font-size="7" fill="var(--red)" opacity="0.9">Fake</text>
+        <text x="160" y="58" text-anchor="middle" font-size="7" fill="var(--red)" opacity="0.8">Server</text>
+        <line x1="110" y1="26" x2="76" y2="40" stroke="${color}" stroke-width="0.8" opacity="0.2" stroke-dasharray="3 2"/>
+        <line x1="110" y1="26" x2="144" y2="40" stroke="var(--red)" stroke-width="1.2" opacity="0.6"/>
+        <polygon points="144,40 137,33 148,33" fill="var(--red)" opacity="0.6"/>
+      </svg>`,
+
+    portintrusion: (color) => `
+      <svg viewBox="0 0 220 80" xmlns="http://www.w3.org/2000/svg">
+        <rect x="80" y="14" width="60" height="50" rx="3" fill="none" stroke="${color}" stroke-width="1.2" opacity="0.7"/>
+        <text x="110" y="35" text-anchor="middle" font-size="8" fill="${color}" opacity="0.6">SERVER</text>
+        <rect x="88" y="40" width="44" height="18" rx="2" fill="rgba(255,77,106,0.08)" stroke="var(--red)" stroke-width="1"/>
+        <text x="110" y="53" text-anchor="middle" font-family="monospace" font-size="8" fill="var(--red)">:3306 OPEN</text>
+        <line x1="20" y1="50" x2="80" y2="50" stroke="${color}" stroke-width="1" stroke-dasharray="4 3" opacity="0.4"/>
+        <polygon points="80,46 80,54 90,50" fill="${color}" opacity="0.5"><animate attributeName="opacity" values="0.2;0.8;0.2" dur="1.5s" repeatCount="indefinite"/></polygon>
+        <text x="40" y="40" text-anchor="middle" font-size="8" fill="${color}" opacity="0.5">ATTACKER</text>
+        <circle cx="34" cy="50" r="8" fill="none" stroke="${color}" stroke-width="1" opacity="0.4"/>
+      </svg>`,
+
+    social: (color) => `
+      <svg viewBox="0 0 220 80" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="110" cy="28" r="16" fill="none" stroke="${color}" stroke-width="1.2" opacity="0.7"/>
+        <text x="110" y="32" text-anchor="middle" font-size="14" fill="${color}" opacity="0.8">👤</text>
+        <rect x="50" y="54" width="120" height="20" rx="10" fill="none" stroke="${color}" stroke-width="1" opacity="0.5"/>
+        <text x="110" y="68" text-anchor="middle" font-size="8" fill="${color}" opacity="0.7">IT Support: Click here →</text>
+        <line x1="110" y1="44" x2="110" y2="54" stroke="${color}" stroke-width="1" opacity="0.4" stroke-dasharray="3 2"/>
+        <text x="110" y="12" text-anchor="middle" font-size="8" fill="${color}" opacity="0.4" letter-spacing="1">TARGETED</text>
+      </svg>`,
+  };
+
+  const ATTACK_COLORS = {
+    mitm:'#ff8c42', xss:'#ff4d6a', sqli:'#ff4d6a',
+    bruteforce:'#ff8c42', subdomain:'#ffd166', sslstrip:'#ff4d6a',
+    clickjacking:'#ff8c42', dns:'#ff8c42', portintrusion:'#ff4d6a', social:'#ffd166'
+  };
+
+  const ATTACK_SEV = {
+    mitm:'high', xss:'critical', sqli:'critical',
+    bruteforce:'high', subdomain:'medium', sslstrip:'critical',
+    clickjacking:'high', dns:'high', portintrusion:'critical', social:'medium'
+  };
+
+  function renderAttackProbability(data) {
+    const section = document.getElementById('attack-prob-section');
+    const body    = document.getElementById('attack-prob-body');
+    section.style.display = 'block';
+
+    const key    = data.attack_key || 'mitm';
+    const color  = ATTACK_COLORS[key] || '#ff8c42';
+    const sev    = ATTACK_SEV[key] || 'high';
+    const prob   = Math.min(99, Math.max(55, data.probability || 72));
+    const svgFn  = ATTACK_SVGS[key] || ATTACK_SVGS.mitm;
+
+    body.innerHTML = `
+      <p class="ap-intro">This site will most likely fall victim to...</p>
+      <div class="ap-name ${sev}">${data.attack_name || 'Unknown Attack'}</div>
+      <div class="ap-graphic">${svgFn(color)}</div>
+      <div class="ap-prob-row">
+        <span class="ap-prob-label">Probability</span>
+        <div class="ap-prob-bar-wrap">
+          <div class="ap-prob-bar" id="ap-bar" style="background:${color}"></div>
+        </div>
+        <span class="ap-prob-num" style="color:${color}">${prob}%</span>
+      </div>
+      <div class="ap-reason">${data.explanation || data.short_reason || ''}</div>
+      <div class="ap-scroll-hint" onclick="window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'})">
+        <span>↓</span>
+        Scroll to bottom for full report & fix details
+      </div>
+    `;
+
+    // Animate bar in
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const bar = document.getElementById('ap-bar');
+      if (bar) bar.style.width = prob + '%';
+    }));
+  }
+
+  async function fetchAttackProbability() {
+    // Demo data based on findings if backend unavailable
+    const score = parseInt(document.getElementById('gauge-score').textContent) || 0;
+
+    if (!backendOnline) {
+      // Pick demo attack based on findings
+      let key = 'mitm', name = 'Man-in-the-Middle Attack', prob = 74,
+          expl = 'Missing HSTS and Content-Security-Policy headers leave this site vulnerable to protocol downgrade attacks. An attacker on the same network can intercept unencrypted traffic, steal session cookies, and inject malicious scripts — all without the victim knowing.';
+
+      if (findings.critical > 2) {
+        key='portintrusion'; name='Port-Based Network Intrusion'; prob=87;
+        expl='Multiple high-risk ports are exposed to the public internet. An attacker can directly connect to the database or cache service, bypass authentication, and exfiltrate or destroy data without needing to exploit the web application at all.';
+      } else if (findings.high > 3) {
+        key='xss'; name='Cross-Site Scripting (XSS)'; prob=79;
+        expl='The absence of a Content-Security-Policy header combined with missing X-Frame-Options creates a wide-open XSS attack surface. An attacker can inject malicious JavaScript through any user input field to steal credentials, hijack sessions, or redirect users to phishing pages.';
+      }
+
+      setTimeout(() => renderAttackProbability({attack_name:name,attack_key:key,probability:prob,explanation:expl}), 600);
+      return;
+    }
+
+    try {
+      const res = await fetch(`${BACKEND}/asm/attack-probability`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ target: currentTarget, findings, scan_data: allScanData }),
+      });
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      if (!data.error) renderAttackProbability(data);
+    } catch {
+      // Silent fail — section just stays hidden
+    }
+  }
+
+  function finishScan() {
+    scanning = false;
+    document.getElementById('scan-btn').disabled = false;
+    document.getElementById('input-wrap').classList.remove('scanning');
+    setStatus('Complete', 'live');
+    renderFindings();
+    fetchAttackProbability();
+    // Update AI assistant context
+    window.SENTINEL_CONTEXT = {
+      page: 'asm', target: currentTarget,
+      riskScore: parseInt(document.getElementById('gauge-score').textContent) || 0,
+      findings, scanData: allScanData,
+    };
+    // Show report button
+    setTimeout(() => {
+      const rw = document.getElementById('report-wrap');
+      if (rw) rw.classList.add('show');
+    }, 800);
+  }
+
+  async function generateReport() {
+    const btn = document.getElementById('report-btn');
+    btn.disabled = true;
+    btn.textContent = 'Generating…';
+
+    // Open the window FIRST (must be synchronous within click handler or popup blocker kills it)
+    const win = window.open('', '_blank');
+    if (win) {
+      win.document.write(`<!DOCTYPE html><html><head><style>
+        body{margin:0;background:#080a0e;color:rgba(255,255,255,0.4);
+        font-family:'Inter',sans-serif;display:flex;flex-direction:column;
+        align-items:center;justify-content:center;height:100vh;gap:16px;}
+        .dot{width:6px;height:6px;border-radius:50%;background:#4da6ff;
+        animation:pulse 1.2s ease-in-out infinite;}
+        @keyframes pulse{0%,100%{opacity:0.2}50%{opacity:1}}
+        p{font-size:9px;letter-spacing:6px;text-transform:uppercase;}
+      </style></head><body>
+        <div class="dot"></div>
+        <p>Generating Report</p>
+      </body></html>`);
+    }
+
+    const score = parseInt(document.getElementById('gauge-score').textContent) || 0;
+
+    try {
+      const res = await fetch(`${BACKEND}/report`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target: currentTarget, data: allScanData, score, findings }),
+      });
+      if (!res.ok) throw new Error(`Backend error: ${res.status}`);
+      const html = await res.text();
+
+      if (win && !win.closed) {
+        win.document.open();
+        win.document.write(html);
+        win.document.close();
+      } else {
+        // Fallback: download as HTML file
+        const blob = new Blob([html], { type: 'text/html' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `sentinel-report-${currentTarget.replace(/[^a-z0-9]/gi,'-')}.html`;
+        a.click();
+      }
+    } catch (e) {
+      console.error('Report error:', e);
+      if (win) win.close();
+      alert(`Report generation failed: ${e.message}\n\nCheck the terminal for backend errors.`);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Generate Report ↗';
+    }
+  }
+
+  // ═══════════════════════════════════════════
+  // REAL SCAN (SSE)
+  // ═══════════════════════════════════════════
+  function runRealScan(target) {
+    const es = new EventSource(`${BACKEND}/scan?target=${encodeURIComponent(target)}`);
+
+    const handlers = {
+      whois:   renderWhois,
+      dns:     renderDns,
+      ssl:     renderSsl,
+      headers: renderHeaders,
+      subs:    renderSubdomains,
+      ports:   renderPorts,
+      github:  renderGithub,
+    };
+
+    es.onmessage = e => {
+      const msg = JSON.parse(e.data);
+      if (msg.status === 'running') {
+        setPhase(msg.phase, 'active');
+      } else if (msg.status === 'complete' && handlers[msg.phase]) {
+        handlers[msg.phase](msg.data);
+      } else if (msg.status === 'done') {
+        es.close();
+        finishScan();
+      } else if (msg.status === 'error') {
+        setPhase(msg.phase, 'error');
+      }
+    };
+
+    es.onerror = () => { es.close(); finishScan(); };
+  }
+
+  // ═══════════════════════════════════════════
+  // DEMO SCAN (simulated data)
+  // ═══════════════════════════════════════════
+  function runDemoScan(target) {
+    document.getElementById('demo-banner').textContent = '⚡ Demo Mode — Backend offline. Showing simulated scan data.';
+    document.getElementById('demo-banner').classList.add('show');
+
+    const domain = target.replace(/^https?:\/\//, '').split('/')[0];
+
+    const steps = [
+      { phase: 'whois', delay: 700, render: () => renderWhois({
+          registrar: 'GoDaddy LLC', created: '2015-06-12', expires: '2027-06-12',
+          updated: '2024-01-05', registrant: 'Privacy Redacted',
+          nameservers: ['ns1.example.com', 'ns2.example.com']
+        })
+      },
+      { phase: 'dns', delay: 900, render: () => renderDns({
+          A: ['93.184.216.34'], AAAA: ['2606:2800:220:1:248:1893:25c8:1946'],
+          MX: ['10 mail.' + domain], NS: ['ns1.' + domain, 'ns2.' + domain],
+          TXT: ['v=spf1 include:_spf.google.com ~all'],
+          dnssec: false
+        })
+      },
+      { phase: 'ssl', delay: 1000, render: () => renderSsl({
+          valid: true, subject: '*.' + domain, issuer: "DigiCert Inc",
+          expires: '2025-11-30', days_left: 127, protocol: 'TLSv1.3',
+          cipher: 'TLS_AES_256_GCM_SHA384'
+        })
+      },
+      { phase: 'headers', delay: 900, render: () => renderHeaders({
+          present: ['X-Content-Type-Options','X-Frame-Options','Referrer-Policy'],
+          all: {
+            'server': 'nginx/1.24.0', 'x-frame-options': 'SAMEORIGIN',
+            'x-content-type-options': 'nosniff', 'referrer-policy': 'strict-origin',
+            'cache-control': 'max-age=0, no-cache'
+          }
+        })
+      },
+      { phase: 'subs', delay: 1400, render: () => renderSubdomains({
+          found: [
+            { host: 'www.'     + domain, ip: '93.184.216.34' },
+            { host: 'api.'     + domain, ip: '93.184.216.35' },
+            { host: 'mail.'    + domain, ip: '93.184.216.36' },
+            { host: 'dev.'     + domain, ip: '10.0.0.45' },
+            { host: 'staging.' + domain, ip: '10.0.0.46' },
+          ]
+        })
+      },
+      { phase: 'ports', delay: 1600, render: () => renderPorts({
+          results: [
+            { port: 21,   service: 'FTP',        state: 'closed' },
+            { port: 22,   service: 'SSH',         state: 'open'   },
+            { port: 80,   service: 'HTTP',        state: 'open'   },
+            { port: 443,  service: 'HTTPS',       state: 'open'   },
+            { port: 3306, service: 'MySQL',       state: 'open'   },
+            { port: 5432, service: 'PostgreSQL',  state: 'closed' },
+            { port: 6379, service: 'Redis',       state: 'closed' },
+            { port: 8080, service: 'HTTP-Alt',    state: 'open'   },
+            { port: 9200, service: 'Elasticsearch', state: 'closed' },
+            { port: 27017, service: 'MongoDB',   state: 'closed' },
+          ]
+        })
+      },
+      ...(isGithub ? [{ phase: 'github', delay: 1800, render: () => renderGithub({
+          secrets: [
+            { type: 'AWS Access Key', file: 'config/deploy.rb', line: 42, snippet: 'AKIA3X7QLMN...J4K2' },
+            { type: 'Generic API Key', file: '.env.example', line: 7, snippet: 'API_KEY="sk-prod-a1b2c3d4e5f6g7h8i9j0"' }
+          ]
+        }) }] : []),
+    ];
+
+    let time = 0;
+    steps.forEach(step => {
+      time += step.delay;
+      setTimeout(() => setPhase(step.phase, 'active'), time - 400);
+      setTimeout(() => step.render(), time);
+    });
+
+    setTimeout(() => finishScan(), time + 600);
+  }
+  </script>
+
+  <script>window.SENTINEL_CONTEXT = { page: 'asm' };</script>
+  <script src="config.js"></script>
+  <script src="ai-assistant.js"></script>
+</body>
+</html>

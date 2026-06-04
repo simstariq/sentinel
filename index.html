@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SENTINEL — AI Security Platform</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --blue: #4da6ff;
+      --blue-dim: rgba(77, 166, 255, 0.5);
+      --blue-glow: rgba(77, 166, 255, 0.12);
+    }
+
+    html, body {
+      width: 100%; height: 100%;
+      overflow: hidden;
+      font-family: 'Inter', sans-serif;
+      background: #000;
+    }
+
+    /* Background slow light-up */
+    #bg-layer {
+      position: fixed;
+      inset: 0;
+      background: #000;
+      animation: bgLighten 4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+      z-index: 0;
+    }
+    @keyframes bgLighten {
+      0%   { background: #000000; }
+      100% { background: #0b0c10; }
+    }
+
+    /* Subtle radial center glow on bg */
+    #bg-glow {
+      position: fixed;
+      inset: 0;
+      background: radial-gradient(ellipse 60% 60% at 50% 50%, rgba(30, 80, 180, 0.07) 0%, transparent 70%);
+      z-index: 1;
+      opacity: 0;
+      animation: glowIn 3s ease 1s forwards;
+    }
+    @keyframes glowIn { to { opacity: 1; } }
+
+    /* Three.js canvas */
+    #three-canvas {
+      position: fixed;
+      inset: 0;
+      z-index: 2;
+    }
+
+    /* Invisible sphere click zone (centered, 320px circle) */
+    #sphere-hit {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      width: 320px;
+      height: 320px;
+      border-radius: 50%;
+      transform: translate(-50%, -55%);
+      z-index: 5;
+      cursor: crosshair;
+    }
+
+    /* UI overlay */
+    #ui {
+      position: fixed;
+      inset: 0;
+      z-index: 6;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+      transition: opacity 0.6s ease;
+    }
+    #ui.fade-out { opacity: 0; }
+
+    #brand {
+      font-size: 10px;
+      font-weight: 300;
+      letter-spacing: 12px;
+      color: rgba(255,255,255,0.5);
+      text-transform: uppercase;
+      opacity: 0;
+      animation: fadeUp 1.5s ease 1.5s forwards;
+      margin-bottom: 4px;
+      transform: translateY(-180px);
+    }
+
+    #tagline {
+      font-size: 9px;
+      font-weight: 200;
+      letter-spacing: 5px;
+      color: rgba(77, 166, 255, 0.4);
+      text-transform: uppercase;
+      opacity: 0;
+      animation: fadeUp 1.5s ease 1.8s forwards;
+      transform: translateY(-175px);
+    }
+
+    /* Spacer for sphere */
+    #sphere-spacer { height: 360px; }
+
+    #hint {
+      font-size: 9px;
+      letter-spacing: 4px;
+      color: rgba(255,255,255,0.2);
+      text-transform: uppercase;
+      opacity: 0;
+      animation: pulse 2.5s ease 3s infinite;
+      margin-bottom: 24px;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 0; }
+      50% { opacity: 1; }
+    }
+
+    #scan-btn {
+      pointer-events: all;
+      background: transparent;
+      border: 1px solid rgba(77, 166, 255, 0.3);
+      color: rgba(77, 166, 255, 0.85);
+      padding: 13px 52px;
+      font-family: 'Inter', sans-serif;
+      font-size: 10px;
+      font-weight: 400;
+      letter-spacing: 8px;
+      text-transform: uppercase;
+      cursor: pointer;
+      opacity: 0;
+      animation: fadeUp 1.5s ease 2.2s forwards;
+      transition: background 0.3s, border-color 0.3s, box-shadow 0.3s, color 0.3s;
+      position: relative;
+      overflow: hidden;
+    }
+    #scan-btn::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg, transparent, rgba(77,166,255,0.05), transparent);
+      transform: translateX(-100%);
+      transition: transform 0.6s ease;
+    }
+    #scan-btn:hover::before { transform: translateX(100%); }
+    #scan-btn:hover {
+      background: rgba(77, 166, 255, 0.07);
+      border-color: rgba(77, 166, 255, 0.7);
+      box-shadow: 0 0 40px rgba(77, 166, 255, 0.15), inset 0 0 20px rgba(77, 166, 255, 0.05);
+      color: #4da6ff;
+    }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ═══════════════════════════════════════
+       MODE SELECTION SCREEN
+    ═══════════════════════════════════════ */
+    #mode-screen {
+      position: fixed;
+      inset: 0;
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 1s ease 0.3s;
+      padding: 40px 24px;
+    }
+    #mode-screen.active {
+      opacity: 1;
+      pointer-events: all;
+    }
+
+    #mode-title {
+      font-size: 9px;
+      font-weight: 300;
+      letter-spacing: 10px;
+      color: rgba(255,255,255,0.35);
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+    #mode-sub {
+      font-size: 11px;
+      font-weight: 200;
+      letter-spacing: 2px;
+      color: rgba(77, 166, 255, 0.5);
+      margin-bottom: 52px;
+    }
+
+    .modes-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+      max-width: 860px;
+      width: 100%;
+    }
+
+    .mode-card {
+      background: rgba(255,255,255,0.02);
+      border: 1px solid rgba(77, 166, 255, 0.1);
+      padding: 28px 24px 26px;
+      cursor: pointer;
+      transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+      position: relative;
+      overflow: hidden;
+      opacity: 0;
+      transform: translateY(16px);
+    }
+    .mode-card.revealed {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .mode-card::after {
+      content: '';
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(77,166,255,0.5), transparent);
+      transform: scaleX(0);
+      transition: transform 0.4s ease;
+    }
+    .mode-card:hover::after { transform: scaleX(1); }
+    .mode-card:hover {
+      background: rgba(77, 166, 255, 0.05);
+      border-color: rgba(77, 166, 255, 0.35);
+      box-shadow: 0 0 30px rgba(77,166,255,0.08), inset 0 0 20px rgba(77,166,255,0.03);
+      transform: translateY(-3px);
+    }
+
+    .mode-icon {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 36px;
+      height: 36px;
+      border: 1px solid rgba(77,166,255,0.2);
+      border-radius: 8px;
+      margin-bottom: 18px;
+      background: rgba(77,166,255,0.06);
+      font-size: 16px;
+    }
+
+    .mode-badge {
+      display: inline-block;
+      font-size: 7px;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: rgba(77,166,255,0.5);
+      border: 1px solid rgba(77,166,255,0.2);
+      padding: 2px 7px;
+      margin-bottom: 10px;
+    }
+
+    .mode-card h3 {
+      font-size: 13px;
+      font-weight: 400;
+      color: rgba(255,255,255,0.88);
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+
+    .mode-card p {
+      font-size: 11px;
+      font-weight: 300;
+      color: rgba(255,255,255,0.3);
+      line-height: 1.7;
+    }
+
+    .mode-arrow {
+      position: absolute;
+      top: 26px; right: 22px;
+      color: rgba(77,166,255,0.25);
+      font-size: 14px;
+      transition: color 0.3s, transform 0.3s;
+    }
+    .mode-card:hover .mode-arrow {
+      color: rgba(77,166,255,0.7);
+      transform: translate(3px, -3px);
+    }
+
+    /* Back button */
+    #back-btn {
+      margin-top: 36px;
+      background: transparent;
+      border: none;
+      color: rgba(255,255,255,0.2);
+      font-size: 9px;
+      letter-spacing: 5px;
+      text-transform: uppercase;
+      cursor: pointer;
+      font-family: 'Inter', sans-serif;
+      transition: color 0.3s;
+    }
+    #back-btn:hover { color: rgba(255,255,255,0.6); }
+
+    /* Scanline overlay (subtle) */
+    #scanlines {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      pointer-events: none;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0,0,0,0.015) 2px,
+        rgba(0,0,0,0.015) 4px
+      );
+    }
+  </style>
+</head>
+<body>
+
+  <div id="bg-layer"></div>
+  <div id="bg-glow"></div>
+  <canvas id="three-canvas"></canvas>
+  <div id="sphere-hit"></div>
+  <div id="scanlines"></div>
+
+  <!-- Intro UI -->
+  <div id="ui">
+    <p id="brand">Sentinel</p>
+    <p id="tagline">AI Security Platform</p>
+    <div id="sphere-spacer"></div>
+    <p id="hint">click sphere or</p>
+    <button id="scan-btn">Scan</button>
+  </div>
+
+  <!-- Mode Selection -->
+  <div id="mode-screen">
+    <p id="mode-title">Select Mode</p>
+    <p id="mode-sub">Choose a security module to begin</p>
+
+    <div class="modes-grid">
+
+      <div class="mode-card" data-mode="asm">
+        <div class="mode-icon">🌐</div>
+        <span class="mode-badge">Live</span>
+        <h3>Attack Surface Monitor</h3>
+        <p>Real-time recon of domains, open ports, subdomains, SSL certs, and exposed services.</p>
+        <span class="mode-arrow">↗</span>
+      </div>
+
+      <div class="mode-card" data-mode="pentest">
+        <div class="mode-icon">📋</div>
+        <span class="mode-badge">AI Generated</span>
+        <h3>Pentest Report Generator</h3>
+        <p>AI-written professional penetration test reports with severity ratings and remediation steps.</p>
+        <span class="mode-arrow">↗</span>
+      </div>
+
+      <div class="mode-card" data-mode="secrets">
+        <div class="mode-icon">🔑</div>
+        <span class="mode-badge">Repo Scan</span>
+        <h3>Secret Scanner</h3>
+        <p>Detect exposed API keys, tokens, and credentials in public GitHub repositories.</p>
+        <span class="mode-arrow">↗</span>
+      </div>
+
+      <div class="mode-card" data-mode="cve">
+        <div class="mode-icon">⚡</div>
+        <span class="mode-badge">Real-time CVE</span>
+        <h3>CVE Stack Checker</h3>
+        <p>Input your tech stack and get cross-referenced CVE matches with active exploit data.</p>
+        <span class="mode-arrow">↗</span>
+      </div>
+
+      <div class="mode-card" data-mode="email">
+        <div class="mode-icon">✉️</div>
+        <span class="mode-badge">DNS Analysis</span>
+        <h3>Email Security Checker</h3>
+        <p>Validate SPF, DKIM, and DMARC records. Flag misconfigured email infrastructure.</p>
+        <span class="mode-arrow">↗</span>
+      </div>
+
+      <div class="mode-card" data-mode="phishing">
+        <div class="mode-icon">🎯</div>
+        <span class="mode-badge">AI Detection</span>
+        <h3>Phishing Domain Detector</h3>
+        <p>AI similarity scoring to identify typosquatting and brand impersonation domains.</p>
+        <span class="mode-arrow">↗</span>
+      </div>
+
+    </div>
+
+    <button id="back-btn">← Back</button>
+  </div>
+
+  <script src="config.js"></script>
+  <script>window.SENTINEL_CONTEXT = { page: 'home' };</script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script>
+    // ═══════════════════════════════════════
+    // THREE.JS PARTICLE SPHERE
+    // ═══════════════════════════════════════
+
+    const canvas = document.getElementById('three-canvas');
+    const W = window.innerWidth, H = window.innerHeight;
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(52, W / H, 0.1, 100);
+    camera.position.z = 3.8;
+
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setClearColor(0x000000, 0);
+
+    // ── Glow sprite texture ──────────────────
+    function makeGlowSprite() {
+      const size = 80;
+      const c = document.createElement('canvas');
+      c.width = c.height = size;
+      const ctx = c.getContext('2d');
+      const g = ctx.createRadialGradient(size/2, size/2, 0, size/2, size/2, size/2);
+      g.addColorStop(0,   'rgba(220, 235, 255, 1)');
+      g.addColorStop(0.2, 'rgba(130, 190, 255, 0.9)');
+      g.addColorStop(0.5, 'rgba(60,  130, 255, 0.4)');
+      g.addColorStop(1,   'rgba(0,   40,  200, 0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, size, size);
+      return new THREE.CanvasTexture(c);
+    }
+
+    const sprite = makeGlowSprite();
+
+    // ── Build particles ──────────────────────
+    const COUNT = 4200;
+    const pos      = new Float32Array(COUNT * 3);
+    const origPos  = new Float32Array(COUNT * 3);
+    const vel      = new Float32Array(COUNT * 3);
+    const sizes    = new Float32Array(COUNT);
+    const alphas   = new Float32Array(COUNT);
+
+    for (let i = 0; i < COUNT; i++) {
+      const theta = Math.random() * Math.PI * 2;
+      const phi   = Math.acos(2 * Math.random() - 1);
+
+      // Mostly on surface, some interior for depth
+      const rng = Math.random();
+      let r;
+      if (rng > 0.25)      r = 0.92 + Math.random() * 0.18;  // shell
+      else if (rng > 0.08) r = 0.55 + Math.random() * 0.38;  // interior
+      else                 r = Math.random() * 0.55;           // core glow
+
+      const x = r * Math.sin(phi) * Math.cos(theta);
+      const y = r * Math.sin(phi) * Math.sin(theta);
+      const z = r * Math.cos(phi);
+
+      pos[i*3]   = origPos[i*3]   = x;
+      pos[i*3+1] = origPos[i*3+1] = y;
+      pos[i*3+2] = origPos[i*3+2] = z;
+
+      // Explode velocity: outward + slight randomness
+      const spread = 0.6;
+      vel[i*3]   = x * 0.035 + (Math.random() - 0.5) * spread * 0.02;
+      vel[i*3+1] = y * 0.035 + (Math.random() - 0.5) * spread * 0.02;
+      vel[i*3+2] = z * 0.035 + (Math.random() - 0.5) * spread * 0.02;
+
+      // Size: larger near surface for star-like dots
+      sizes[i]  = r > 0.85 ? 1.8 + Math.random() * 2.4 : 0.8 + Math.random() * 1.2;
+      alphas[i] = 0.5 + Math.random() * 0.5;
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('size',     new THREE.BufferAttribute(sizes, 1));
+
+    const mat = new THREE.PointsMaterial({
+      size: 0.045,
+      color: 0x7ac4ff,
+      map: sprite,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+
+    const points = new THREE.Points(geo, mat);
+    scene.add(points);
+
+    // ── Inner glow sphere ────────────────────
+    const glowGeo = new THREE.SphereGeometry(0.72, 32, 32);
+    const glowMat = new THREE.MeshBasicMaterial({
+      color: 0x0055ff,
+      transparent: true,
+      opacity: 0,
+      side: THREE.FrontSide,
+    });
+    const glowMesh = new THREE.Mesh(glowGeo, glowMat);
+    scene.add(glowMesh);
+
+    // Outer atmosphere halo
+    const haloGeo = new THREE.SphereGeometry(1.15, 32, 32);
+    const haloMat = new THREE.MeshBasicMaterial({
+      color: 0x1144cc,
+      transparent: true,
+      opacity: 0,
+      side: THREE.BackSide,
+    });
+    const haloMesh = new THREE.Mesh(haloGeo, haloMat);
+    scene.add(haloMesh);
+
+    // ── State ────────────────────────────────
+    let mouseX = 0, mouseY = 0;
+    let rotX = 0, rotY = 0;
+    let disintegrating = false;
+    let disTime = 0;
+    let triggered = false;
+    const startTime = performance.now();
+
+    // ── Mouse tracking ───────────────────────
+    document.addEventListener('mousemove', e => {
+      mouseX = (e.clientX / W - 0.5) * 2;
+      mouseY = (e.clientY / H - 0.5) * 2;
+    });
+
+    // ── Animation loop ───────────────────────
+    function animate() {
+      requestAnimationFrame(animate);
+
+      const elapsed = (performance.now() - startTime) / 1000;
+
+      if (!disintegrating) {
+        // Fade in over 2.5s
+        const targetOp = Math.min(0.92, elapsed / 2.5);
+        mat.opacity    += (targetOp - mat.opacity) * 0.04;
+        glowMat.opacity = mat.opacity * 0.09;
+        haloMat.opacity = mat.opacity * 0.06;
+
+        // Mouse parallax + slow auto spin
+        rotY += (mouseX * 0.35 - rotY) * 0.04;
+        rotX += (-mouseY * 0.20 - rotX) * 0.04;
+        points.rotation.y   += (rotY - points.rotation.y) * 0.08 + 0.0008;
+        points.rotation.x   += (rotX - points.rotation.x) * 0.08;
+        glowMesh.rotation.copy(points.rotation);
+        haloMesh.rotation.copy(points.rotation);
+
+        // Gentle breathe scale
+        const breathe = 1 + Math.sin(elapsed * 0.9) * 0.012;
+        points.scale.setScalar(breathe);
+        glowMesh.scale.setScalar(breathe * 0.98);
+
+      } else {
+        // ── DISINTEGRATION ──────────────────
+        disTime += 0.016;
+        const posArr = geo.attributes.position.array;
+        const accel  = 1 + disTime * 4;
+
+        for (let i = 0; i < COUNT; i++) {
+          posArr[i*3]   += vel[i*3]   * accel;
+          posArr[i*3+1] += vel[i*3+1] * accel;
+          posArr[i*3+2] += vel[i*3+2] * accel;
+        }
+        geo.attributes.position.needsUpdate = true;
+
+        mat.opacity     = Math.max(0, 0.92 - disTime * 1.4);
+        glowMat.opacity = mat.opacity * 0.09;
+        haloMat.opacity = mat.opacity * 0.06;
+
+        if (disTime > 1.1 && !modesShown) showModes();
+      }
+
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    // ═══════════════════════════════════════
+    // INTERACTIONS
+    // ═══════════════════════════════════════
+
+    function startDisintegration() {
+      if (triggered) return;
+      triggered = true;
+
+      document.getElementById('ui').classList.add('fade-out');
+      document.getElementById('sphere-hit').style.pointerEvents = 'none';
+
+      setTimeout(() => { disintegrating = true; }, 300);
+    }
+
+    document.getElementById('sphere-hit').addEventListener('click', startDisintegration);
+    document.getElementById('scan-btn').addEventListener('click', startDisintegration);
+
+    let modesShown = false;
+    function showModes() {
+      if (modesShown) return;
+      modesShown = true;
+
+      const screen = document.getElementById('mode-screen');
+      screen.classList.add('active');
+
+      // Stagger card reveal
+      const cards = document.querySelectorAll('.mode-card');
+      cards.forEach((card, i) => {
+        setTimeout(() => card.classList.add('revealed'), 80 + i * 90);
+      });
+    }
+
+    // Back button
+    document.getElementById('back-btn').addEventListener('click', () => {
+      // Reset everything
+      triggered = false;
+      disintegrating = false;
+      modesShown = false;
+      disTime = 0;
+
+      document.getElementById('mode-screen').classList.remove('active');
+      document.querySelectorAll('.mode-card').forEach(c => c.classList.remove('revealed'));
+
+      // Reset particles
+      const posArr = geo.attributes.position.array;
+      for (let i = 0; i < COUNT; i++) {
+        posArr[i*3]   = origPos[i*3];
+        posArr[i*3+1] = origPos[i*3+1];
+        posArr[i*3+2] = origPos[i*3+2];
+      }
+      geo.attributes.position.needsUpdate = true;
+
+      const ui = document.getElementById('ui');
+      ui.classList.remove('fade-out');
+      document.getElementById('sphere-hit').style.pointerEvents = 'all';
+    });
+
+    // Mode card routing
+    const routes = {
+      asm:      'asm.html',
+      pentest:  '#',       // coming soon
+      secrets:  'secrets.html',
+      cve:      'cve.html',
+      email:    '#',
+      phishing: '#',
+    };
+    document.querySelectorAll('.mode-card').forEach(card => {
+      card.addEventListener('click', () => {
+        const mode = card.dataset.mode;
+        const route = routes[mode] || '#';
+        if (route !== '#') window.location.href = route;
+      });
+    });
+
+    // ── Resize ───────────────────────────────
+    window.addEventListener('resize', () => {
+      const w = window.innerWidth, h = window.innerHeight;
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+    });
+  </script>
+  <script src="ai-assistant.js"></script>
+</body>
+</html>

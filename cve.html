@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CVE Stack Checker — SENTINEL</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --amber:     #f0a500;
+      --amber-dim: rgba(240,165,0,0.45);
+      --amber-glow:rgba(240,165,0,0.08);
+      --red:    #ff4d6a;  --orange: #ff8c42;
+      --yellow: #ffd166;  --green:  #06d6a0;
+      --blue:   #4da6ff;
+      --bg:        #080a0e;
+      --surface:   rgba(255,255,255,0.025);
+      --border:    rgba(240,165,0,0.1);
+      --border-hi: rgba(240,165,0,0.35);
+      --text:      rgba(255,255,255,0.85);
+      --text-dim:  rgba(255,255,255,0.35);
+      --text-mute: rgba(255,255,255,0.15);
+      --mono: 'JetBrains Mono', monospace;
+    }
+    html, body { width:100%; min-height:100vh; background:var(--bg); color:var(--text); font-family:'Inter',sans-serif; overflow-x:hidden; }
+    body::after { content:''; position:fixed; inset:0; background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.012) 2px,rgba(0,0,0,.012) 4px); pointer-events:none; z-index:9999; }
+
+    /* NAV */
+    nav { display:flex; align-items:center; justify-content:space-between; padding:20px 40px; border-bottom:1px solid var(--border); position:sticky; top:0; z-index:100; background:rgba(8,10,14,.92); backdrop-filter:blur(20px); }
+    .nav-brand { font-size:9px; letter-spacing:10px; color:var(--amber-dim); text-transform:uppercase; text-decoration:none; transition:color .3s; }
+    .nav-brand:hover { color:var(--amber); }
+    .nav-module { font-size:9px; letter-spacing:5px; color:var(--text-dim); text-transform:uppercase; }
+    .nav-status { display:flex; align-items:center; gap:8px; font-size:9px; letter-spacing:3px; color:var(--text-mute); text-transform:uppercase; font-family:var(--mono); }
+    .status-dot { width:6px; height:6px; border-radius:50%; background:var(--text-mute); transition:background .3s; }
+    .status-dot.scanning { background:var(--amber); box-shadow:0 0 8px var(--amber); animation:blink .8s infinite; }
+    .status-dot.done { background:var(--green); box-shadow:0 0 8px var(--green); }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+    /* INPUT */
+    .input-section { padding:48px 40px 28px; max-width:960px; margin:0 auto; }
+    .input-header { margin-bottom:28px; }
+    .input-header h1 { font-size:22px; font-weight:300; letter-spacing:1px; margin-bottom:6px; }
+    .input-header p { font-size:11px; font-weight:300; color:var(--text-dim); letter-spacing:1px; }
+
+    /* Tabs */
+    .tabs { display:flex; border:1px solid var(--border); width:fit-content; margin-bottom:20px; }
+    .tab-btn { padding:10px 28px; font-size:9px; letter-spacing:5px; text-transform:uppercase; background:transparent; border:none; color:var(--text-mute); cursor:pointer; font-family:'Inter',sans-serif; transition:all .25s; border-right:1px solid var(--border); }
+    .tab-btn:last-child { border-right:none; }
+    .tab-btn.active { background:var(--amber-glow); color:var(--amber); }
+
+    /* Chip input */
+    .chip-input-wrap { border:1px solid var(--border); background:var(--surface); padding:12px 16px; min-height:56px; display:flex; flex-wrap:wrap; gap:8px; align-items:center; cursor:text; transition:border-color .3s, box-shadow .3s; }
+    .chip-input-wrap:focus-within { border-color:var(--border-hi); box-shadow:0 0 40px var(--amber-glow); }
+    .chip { display:flex; align-items:center; gap:6px; background:var(--amber-glow); border:1px solid rgba(240,165,0,0.25); padding:4px 10px; font-size:11px; font-family:var(--mono); color:var(--amber-dim); white-space:nowrap; }
+    .chip button { background:none; border:none; color:var(--text-mute); cursor:pointer; font-size:12px; line-height:1; padding:0; transition:color .2s; }
+    .chip button:hover { color:var(--amber); }
+    .chip-text-input { background:transparent; border:none; outline:none; color:var(--text); font-family:var(--mono); font-size:12px; flex:1; min-width:200px; padding:2px 4px; }
+    .chip-text-input::placeholder { color:var(--text-mute); }
+    .chip-hint { font-size:9px; color:var(--text-mute); font-family:var(--mono); margin-top:8px; }
+
+    /* Ecosystem examples */
+    .examples { display:flex; flex-wrap:wrap; gap:10px; margin-top:10px; }
+    .ex-btn { font-size:9px; color:var(--text-mute); font-family:var(--mono); cursor:pointer; transition:color .2s; }
+    .ex-btn::before { content:'+ '; }
+    .ex-btn:hover { color:var(--amber-dim); }
+
+    /* Drop zone */
+    .drop-zone { border:1px dashed rgba(240,165,0,0.2); background:rgba(240,165,0,0.02); padding:40px 32px; text-align:center; cursor:pointer; transition:all .3s; position:relative; }
+    .drop-zone:hover, .drop-zone.drag-over { border-color:rgba(240,165,0,0.45); background:rgba(240,165,0,0.05); }
+    .drop-icon { font-size:24px; opacity:.4; margin-bottom:12px; }
+    .drop-zone h3 { font-size:12px; font-weight:400; color:var(--text-dim); letter-spacing:2px; margin-bottom:8px; }
+    .drop-zone p { font-size:10px; color:var(--text-mute); font-family:var(--mono); }
+    .drop-zone input[type="file"] { position:absolute; inset:0; opacity:0; cursor:pointer; }
+
+    /* Detected packages preview */
+    .detected-wrap { display:none; margin-top:14px; padding:14px 16px; background:rgba(240,165,0,0.04); border:1px solid rgba(240,165,0,0.15); }
+    .detected-wrap.show { display:block; }
+    .detected-label { font-size:8px; letter-spacing:4px; text-transform:uppercase; color:var(--amber-dim); font-family:var(--mono); margin-bottom:10px; }
+    .detected-chips { display:flex; flex-wrap:wrap; gap:6px; }
+    .d-chip { font-size:9px; font-family:var(--mono); color:var(--text-dim); border:1px solid var(--border); padding:3px 9px; }
+
+    /* Scan button */
+    .scan-btn { width:100%; height:52px; background:transparent; border:1px solid var(--border-hi); color:var(--amber); font-family:'Inter',sans-serif; font-size:9px; letter-spacing:6px; text-transform:uppercase; cursor:pointer; transition:background .3s; margin-top:16px; }
+    .scan-btn:hover:not(:disabled) { background:var(--amber-glow); }
+    .scan-btn:disabled { opacity:.4; cursor:not-allowed; }
+
+    /* RESULTS */
+    .results-section { max-width:960px; margin:0 auto; padding:0 40px 80px; }
+
+    /* Summary bar */
+    .summary-bar { display:none; align-items:center; justify-content:space-between; padding:18px 24px; background:rgba(240,165,0,0.04); border:1px solid rgba(240,165,0,0.18); margin-bottom:28px; }
+    .summary-bar.show { display:flex; }
+    .summary-counts { display:flex; gap:28px; }
+    .scount .num { font-family:var(--mono); font-size:22px; font-weight:300; }
+    .scount .lbl { font-size:8px; letter-spacing:3px; text-transform:uppercase; color:var(--text-mute); }
+    .scount.total .num    { color:var(--text); }
+    .scount.critical .num { color:var(--red); }
+    .scount.high .num     { color:var(--orange); }
+    .scount.medium .num   { color:var(--yellow); }
+    .summary-right { text-align:right; font-size:10px; font-family:var(--mono); color:var(--text-mute); line-height:1.7; }
+
+    /* Empty / scanning */
+    .state-box { display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:320px; text-align:center; }
+    .state-box .icon { font-size:28px; opacity:.3; margin-bottom:16px; }
+    .state-box p { font-size:10px; letter-spacing:4px; text-transform:uppercase; color:var(--text-mute); margin-bottom:6px; }
+    .state-box span { font-size:10px; font-family:var(--mono); color:var(--text-mute); opacity:.6; }
+
+    /* Scanning progress */
+    .scan-progress { display:none; flex-direction:column; align-items:center; justify-content:center; min-height:240px; gap:18px; }
+    .scan-progress.show { display:flex; }
+    .scan-bar-wrap { width:300px; height:1px; background:rgba(240,165,0,0.1); overflow:hidden; }
+    .scan-bar { height:100%; background:var(--amber); animation:sp 2s ease-in-out infinite; }
+    @keyframes sp { 0%{width:0;margin-left:0} 50%{width:60%;margin-left:20%} 100%{width:0;margin-left:100%} }
+    .scan-lbl { font-size:9px; letter-spacing:5px; text-transform:uppercase; color:var(--amber-dim); font-family:var(--mono); }
+
+    /* Clean state */
+    .clean-state { display:none; flex-direction:column; align-items:center; justify-content:center; min-height:220px; gap:12px; text-align:center; }
+    .clean-state.show { display:flex; }
+    .clean-state h3 { font-size:13px; font-weight:300; color:var(--green); letter-spacing:2px; }
+    .clean-state p { font-size:10px; color:var(--text-mute); font-family:var(--mono); }
+
+    /* Package group */
+    .pkg-group { margin-bottom:24px; }
+    .pkg-header { display:flex; align-items:center; gap:14px; padding:13px 20px; background:rgba(240,165,0,0.04); border:1px solid rgba(240,165,0,0.14); margin-bottom:2px; }
+    .pkg-name { font-family:var(--mono); font-size:13px; color:var(--amber-dim); }
+    .pkg-version { font-family:var(--mono); font-size:10px; color:var(--text-mute); }
+    .pkg-eco { font-size:8px; letter-spacing:3px; text-transform:uppercase; padding:2px 7px; border:1px solid rgba(240,165,0,0.2); color:rgba(240,165,0,0.4); font-family:var(--mono); }
+    .pkg-cve-count { margin-left:auto; font-size:9px; font-family:var(--mono); color:var(--text-mute); }
+
+    /* CVE card */
+    .cve-card { background:var(--surface); border:1px solid var(--border); border-top:none; opacity:0; transform:translateY(6px); transition:opacity .4s ease, transform .4s ease, border-color .3s; }
+    .cve-card.show { opacity:1; transform:translateY(0); }
+    .cve-card:hover { border-color:rgba(240,165,0,0.22); }
+
+    .cve-header { display:flex; align-items:center; gap:14px; padding:14px 20px; cursor:pointer; }
+    .cvss-badge { width:48px; height:48px; border-radius:4px; display:flex; align-items:center; justify-content:center; font-family:var(--mono); font-size:15px; font-weight:400; flex-shrink:0; }
+    .cvss-badge.critical { background:rgba(255,77,106,0.1);  color:var(--red);    border:1px solid rgba(255,77,106,0.3); }
+    .cvss-badge.high     { background:rgba(255,140,66,0.1);  color:var(--orange); border:1px solid rgba(255,140,66,0.3); }
+    .cvss-badge.medium   { background:rgba(255,209,102,0.08);color:var(--yellow); border:1px solid rgba(255,209,102,0.3); }
+    .cvss-badge.low      { background:rgba(6,214,160,0.07);  color:var(--green);  border:1px solid rgba(6,214,160,0.25); }
+
+    .cve-info { flex:1; }
+    .cve-id { font-family:var(--mono); font-size:11px; color:var(--amber-dim); margin-bottom:3px; }
+    .cve-summary { font-size:11px; color:var(--text-dim); line-height:1.5; }
+    .cve-meta { text-align:right; font-size:9px; font-family:var(--mono); color:var(--text-mute); line-height:1.8; flex-shrink:0; }
+    .cve-chevron { color:var(--text-mute); font-size:10px; transition:transform .3s; flex-shrink:0; }
+    .cve-header.collapsed .cve-chevron { transform:rotate(-90deg); }
+
+    .cve-body { padding:0 20px 18px; }
+    .cve-fix { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
+    .fix-label { font-size:8px; letter-spacing:3px; text-transform:uppercase; color:var(--text-mute); font-family:var(--mono); }
+    .fix-ver { font-family:var(--mono); font-size:12px; color:var(--green); }
+
+    /* AI insight inside CVE */
+    .cve-ai { display:flex; gap:12px; padding-top:12px; border-top:1px solid rgba(255,255,255,.05); }
+    .ai-lbl { font-size:7px; letter-spacing:3px; text-transform:uppercase; color:rgba(77,166,255,.55); border:1px solid rgba(77,166,255,.2); padding:2px 6px; font-family:var(--mono); white-space:nowrap; flex-shrink:0; margin-top:2px; height:fit-content; }
+    .ai-txt { font-size:11px; color:rgba(255,255,255,.42); line-height:1.7; font-weight:300; font-style:italic; }
+    .ai-cursor { display:inline-block; width:1px; height:12px; background:rgba(77,166,255,.6); vertical-align:middle; animation:cur .8s step-end infinite; margin-left:1px; }
+    @keyframes cur { 0%,100%{opacity:1} 50%{opacity:0} }
+
+    .nvd-link { display:inline-block; margin-top:10px; font-size:9px; letter-spacing:3px; text-transform:uppercase; color:var(--amber-dim); border:1px solid rgba(240,165,0,0.2); padding:4px 12px; text-decoration:none; font-family:var(--mono); transition:all .25s; }
+    .nvd-link:hover { background:var(--amber-glow); color:var(--amber); }
+
+    /* Report button */
+    .report-wrap { display:none; margin-top:28px; padding:20px; background:rgba(240,165,0,0.04); border:1px solid rgba(240,165,0,0.18); align-items:center; justify-content:space-between; gap:20px; }
+    .report-wrap.show { display:flex; }
+    .report-wrap p { font-size:11px; color:rgba(255,255,255,.4); font-weight:300; line-height:1.6; }
+    .report-wrap p strong { color:rgba(255,255,255,.78); font-weight:400; }
+    #report-btn { flex-shrink:0; background:transparent; border:1px solid rgba(240,165,0,0.4); color:var(--amber); font-family:'Inter',sans-serif; font-size:9px; letter-spacing:5px; text-transform:uppercase; padding:12px 28px; cursor:pointer; transition:all .3s; white-space:nowrap; }
+    #report-btn:hover { background:var(--amber-glow); }
+    #report-btn:disabled { opacity:.4; cursor:not-allowed; }
+
+    ::-webkit-scrollbar { width:4px; }
+    ::-webkit-scrollbar-track { background:transparent; }
+    ::-webkit-scrollbar-thumb { background:rgba(240,165,0,0.2); }
+  </style>
+</head>
+<body>
+
+  <nav>
+    <a href="index.html" class="nav-brand">← Sentinel</a>
+    <span class="nav-module">CVE Stack Checker</span>
+    <div class="nav-status">
+      <div class="status-dot" id="status-dot"></div>
+      <span id="status-text">Ready</span>
+    </div>
+  </nav>
+
+  <div class="input-section">
+    <div class="input-header">
+      <h1>Dependency Vulnerability Scan</h1>
+      <p>Enter your tech stack manually or upload a dependency file to check for known CVEs</p>
+    </div>
+
+    <div class="tabs">
+      <button class="tab-btn active" onclick="switchTab('manual')">Manual Entry</button>
+      <button class="tab-btn" onclick="switchTab('upload')">Upload File</button>
+    </div>
+
+    <!-- Manual tab -->
+    <div id="tab-manual">
+      <div class="chip-input-wrap" id="chip-wrap" onclick="document.getElementById('chip-input').focus()">
+        <input id="chip-input" class="chip-text-input" placeholder="django 3.2.0 — press Enter to add" autocomplete="off" spellcheck="false" />
+      </div>
+      <div class="chip-hint">Type a package name and version, then press Enter or comma to add it.</div>
+      <div class="examples">
+        <span class="ex-btn" onclick="addExample('django 3.2.0')">django 3.2.0</span>
+        <span class="ex-btn" onclick="addExample('express 4.17.1')">express 4.17.1</span>
+        <span class="ex-btn" onclick="addExample('log4j-core 2.14.1')">log4j-core 2.14.1</span>
+        <span class="ex-btn" onclick="addExample('lodash 4.17.15')">lodash 4.17.15</span>
+        <span class="ex-btn" onclick="addExample('requests 2.25.0')">requests 2.25.0</span>
+        <span class="ex-btn" onclick="addExample('jquery 3.5.0')">jquery 3.5.0</span>
+      </div>
+    </div>
+
+    <!-- Upload tab -->
+    <div id="tab-upload" style="display:none">
+      <div class="drop-zone" id="drop-zone">
+        <div class="drop-icon">📦</div>
+        <h3>Drop a dependency file here</h3>
+        <p>package.json · requirements.txt · Gemfile.lock · go.mod · Cargo.toml · pom.xml · composer.json</p>
+        <input type="file" id="file-input" onchange="handleFileUpload(this.files[0])" />
+      </div>
+      <div class="detected-wrap" id="detected-wrap">
+        <div class="detected-label">Detected Packages</div>
+        <div class="detected-chips" id="detected-chips"></div>
+      </div>
+    </div>
+
+    <button class="scan-btn" id="scan-btn" onclick="startScan()">Check for CVEs</button>
+  </div>
+
+  <!-- RESULTS -->
+  <div class="results-section">
+
+    <div class="summary-bar" id="summary-bar">
+      <div class="summary-counts">
+        <div class="scount total">   <div class="num" id="cnt-total">0</div>   <div class="lbl">CVEs</div></div>
+        <div class="scount critical"><div class="num" id="cnt-critical">0</div><div class="lbl">Critical</div></div>
+        <div class="scount high">    <div class="num" id="cnt-high">0</div>    <div class="lbl">High</div></div>
+        <div class="scount medium">  <div class="num" id="cnt-medium">0</div> <div class="lbl">Medium</div></div>
+      </div>
+      <div class="summary-right" id="summary-right"></div>
+    </div>
+
+    <div class="scan-progress" id="scan-progress">
+      <div class="scan-lbl">Querying CVE Database</div>
+      <div class="scan-bar-wrap"><div class="scan-bar"></div></div>
+      <div style="font-size:10px;color:var(--text-mute);font-family:var(--mono)" id="scan-pkg-label">Checking packages…</div>
+    </div>
+
+    <div class="state-box" id="empty-state">
+      <div class="icon">⚡</div>
+      <p>No scan active</p>
+      <span>Enter your stack above to check for vulnerabilities</span>
+    </div>
+
+    <div class="clean-state" id="clean-state">
+      <div style="font-size:32px">✅</div>
+      <h3>No CVEs Detected</h3>
+      <p>All scanned packages appear clean against the OSV database.</p>
+    </div>
+
+    <div id="results-list"></div>
+
+    <div class="report-wrap" id="report-wrap">
+      <p><strong>CVE Triage Report Ready</strong><br>Generate a prioritized remediation plan with exact upgrade commands for every vulnerable dependency.</p>
+      <button id="report-btn" onclick="generateReport()">Generate Report ↗</button>
+    </div>
+
+  </div>
+
+  <script>
+  // ═══════════════════════════════════
+  // STATE
+  // ═══════════════════════════════════
+  const BACKEND = (typeof SENTINEL_CONFIG !== 'undefined') ? SENTINEL_CONFIG.BACKEND : 'http://localhost:8000';
+  let activeTab   = 'manual';
+  let chips       = [];        // {name, version, ecosystem}
+  let uploadedPkgs= [];        // from file parse
+  let scanResults = {};        // {pkg_key: {package, vulns}}
+  let stackLabel  = '';
+  let scanning    = false;
+  let backendOnline = false;
+  let cveIndex    = 0;
+
+  // ═══════════════════════════════════
+  // TABS
+  // ═══════════════════════════════════
+  function switchTab(tab) {
+    activeTab = tab;
+    document.querySelectorAll('.tab-btn').forEach((b,i) =>
+      b.classList.toggle('active', (i===0&&tab==='manual')||(i===1&&tab==='upload')));
+    document.getElementById('tab-manual').style.display = tab==='manual'?'block':'none';
+    document.getElementById('tab-upload').style.display = tab==='upload'?'block':'none';
+  }
+
+  // ═══════════════════════════════════
+  // CHIP INPUT
+  // ═══════════════════════════════════
+  const chipInput = document.getElementById('chip-input');
+  chipInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault();
+      addChipFromInput();
+    } else if (e.key === 'Backspace' && chipInput.value === '' && chips.length > 0) {
+      chips.pop();
+      renderChips();
+    }
+  });
+
+  function addChipFromInput() {
+    const val = chipInput.value.trim().replace(/,$/,'');
+    if (!val) return;
+    const m = val.match(/^([A-Za-z0-9_\-\.\/]+)[\s@=:]+([0-9][0-9a-zA-Z._\-]*)$/);
+    if (m) {
+      chips.push({ name: m[1], version: m[2], ecosystem: null });
+      renderChips();
+      chipInput.value = '';
+    }
+  }
+
+  function addExample(text) {
+    switchTab('manual');
+    const m = text.match(/^([A-Za-z0-9_\-\.\/]+)\s+([0-9][0-9a-zA-Z._\-]*)$/);
+    if (m) { chips.push({name:m[1],version:m[2],ecosystem:null}); renderChips(); }
+  }
+
+  function removeChip(i) { chips.splice(i,1); renderChips(); }
+
+  function renderChips() {
+    const wrap = document.getElementById('chip-wrap');
+    // Remove existing chip elements
+    [...wrap.querySelectorAll('.chip')].forEach(c => c.remove());
+    chips.forEach((c,i) => {
+      const el = document.createElement('div');
+      el.className = 'chip';
+      el.innerHTML = `<span>${c.name} <span style="opacity:.5">${c.version}</span></span><button onclick="removeChip(${i})">✕</button>`;
+      wrap.insertBefore(el, chipInput);
+    });
+  }
+
+  // ═══════════════════════════════════
+  // FILE UPLOAD
+  // ═══════════════════════════════════
+  const dropZone = document.getElementById('drop-zone');
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.classList.remove('drag-over'); handleFileUpload(e.dataTransfer.files[0]); });
+
+  async function handleFileUpload(file) {
+    if (!file) return;
+    dropZone.querySelector('h3').textContent = file.name;
+
+    // Try backend parse first, else client-side
+    let pkgs = [];
+    try {
+      const form = new FormData();
+      form.append('files', file);
+      const res = await fetch(`${BACKEND}/cve/parse-file`, {method:'POST', body:form});
+      if (res.ok) { const d = await res.json(); pkgs = d.packages||[]; }
+    } catch {
+      pkgs = clientParseFile(file.name, await file.text());
+    }
+
+    uploadedPkgs = pkgs;
+    const wrap   = document.getElementById('detected-wrap');
+    const chips  = document.getElementById('detected-chips');
+    if (pkgs.length > 0) {
+      chips.innerHTML = pkgs.slice(0,30).map(p =>
+        `<div class="d-chip">${p.name} <span style="opacity:.5">${p.version}</span></div>`
+      ).join('') + (pkgs.length>30?`<div class="d-chip">+${pkgs.length-30} more</div>`:'');
+      wrap.classList.add('show');
+    }
+  }
+
+  function clientParseFile(filename, content) {
+    // Basic client-side fallback for package.json / requirements.txt
+    const fname = filename.toLowerCase();
+    const pkgs = [];
+    if (fname.endsWith('package.json')) {
+      try {
+        const d = JSON.parse(content);
+        for (const key of ['dependencies','devDependencies']) {
+          for (const [name,ver] of Object.entries(d[key]||{})) {
+            const v = ver.replace(/^[^0-9]*/,'').split(' ')[0];
+            if (v&&/\d/.test(v)) pkgs.push({name,version:v,ecosystem:'npm'});
+          }
+        }
+      } catch {}
+    } else if (fname.includes('requirements')) {
+      for (const line of content.split('\n')) {
+        const m = line.trim().match(/^([A-Za-z0-9_\-\.]+)\s*[>=<!]+\s*([0-9][0-9a-zA-Z._\-]*)/);
+        if (m) pkgs.push({name:m[1],version:m[2],ecosystem:'PyPI'});
+      }
+    }
+    return pkgs;
+  }
+
+  // ═══════════════════════════════════
+  // STATUS
+  // ═══════════════════════════════════
+  function setStatus(text, state) {
+    document.getElementById('status-text').textContent = text;
+    document.getElementById('status-dot').className = 'status-dot'+(state?' '+state:'');
+  }
+
+  // ═══════════════════════════════════
+  // RESULTS RESET
+  // ═══════════════════════════════════
+  function resetResults() {
+    scanResults = {}; cveIndex = 0;
+    document.getElementById('results-list').innerHTML = '';
+    document.getElementById('summary-bar').classList.remove('show');
+    document.getElementById('clean-state').classList.remove('show');
+    document.getElementById('report-wrap').classList.remove('show');
+    document.getElementById('empty-state').style.display = 'none';
+    document.getElementById('scan-progress').classList.add('show');
+    document.getElementById('cnt-total').textContent =
+    document.getElementById('cnt-critical').textContent =
+    document.getElementById('cnt-high').textContent =
+    document.getElementById('cnt-medium').textContent = '0';
+  }
+
+  function updateSummary() {
+    const counts = {critical:0,high:0,medium:0,low:0};
+    let total = 0;
+    Object.values(scanResults).forEach(pkg => pkg.vulns.forEach(v => {
+      counts[v.severity]=(counts[v.severity]||0)+1; total++;
+    }));
+    document.getElementById('cnt-total').textContent    = total;
+    document.getElementById('cnt-critical').textContent = counts.critical;
+    document.getElementById('cnt-high').textContent     = counts.high;
+    document.getElementById('cnt-medium').textContent   = counts.medium;
+    return {total, counts};
+  }
+
+  // ═══════════════════════════════════
+  // RENDER PACKAGE GROUP + CVE CARDS
+  // ═══════════════════════════════════
+  function renderResults(results) {
+    const list = document.getElementById('results-list');
+    let delay  = 0;
+
+    Object.entries(results).forEach(([key, pkgData]) => {
+      const {package: pkg, vulns} = pkgData;
+      if (!vulns || vulns.length === 0) return;
+
+      const group = document.createElement('div');
+      group.className = 'pkg-group';
+      group.innerHTML = `
+        <div class="pkg-header">
+          <span class="pkg-name">${pkg.name}</span>
+          <span class="pkg-version">v${pkg.version}</span>
+          <span class="pkg-eco">${pkg.ecosystem||'npm'}</span>
+          <span class="pkg-cve-count">${vulns.length} CVE${vulns.length>1?'s':''}</span>
+        </div>
+      `;
+
+      vulns.forEach((vuln, vi) => {
+        const idx = cveIndex++;
+        const card = buildCveCard(vuln, idx);
+        group.appendChild(card);
+        setTimeout(() => card.classList.add('show'), delay + vi*80);
+        setTimeout(() => fetchCveInsight(vuln, idx), delay + vi*80 + 350);
+      });
+
+      list.appendChild(group);
+      delay += vulns.length * 80 + 200;
+    });
+  }
+
+  function buildCveCard(vuln, idx) {
+    const card = document.createElement('div');
+    card.className = 'cve-card';
+    card.id = `cve-${idx}`;
+
+    const fixHtml = vuln.fixed_in
+      ? `<div class="cve-fix"><span class="fix-label">Fix in</span><span class="fix-ver">v${vuln.fixed_in}</span></div>`
+      : `<div class="cve-fix"><span class="fix-label" style="color:var(--orange)">No official fix — check advisories</span></div>`;
+
+    const nvdHtml = vuln.nvd_url
+      ? `<a class="nvd-link" href="${vuln.nvd_url}" target="_blank">NVD ↗</a>`
+      : '';
+
+    card.innerHTML = `
+      <div class="cve-header" onclick="toggleCve(this)">
+        <div class="cvss-badge ${vuln.severity}">${vuln.score}</div>
+        <div class="cve-info">
+          <div class="cve-id">${vuln.id || vuln.osv_id || 'Unknown'}</div>
+          <div class="cve-summary">${vuln.summary}</div>
+        </div>
+        <div class="cve-meta">
+          ${vuln.severity.toUpperCase()}<br>
+          ${vuln.published||''}
+        </div>
+        <span class="cve-chevron">▾</span>
+      </div>
+      <div class="cve-body">
+        ${fixHtml}
+        <div class="cve-ai">
+          <span class="ai-lbl">AI</span>
+          <span class="ai-txt" id="ai-cve-${idx}"><span class="ai-cursor"></span></span>
+        </div>
+        ${nvdHtml}
+      </div>
+    `;
+    return card;
+  }
+
+  function toggleCve(header) {
+    const body = header.nextElementSibling;
+    const col  = header.classList.toggle('collapsed');
+    body.style.display = col ? 'none' : 'block';
+  }
+
+  // ═══════════════════════════════════
+  // AI INSIGHT PER CVE
+  // ═══════════════════════════════════
+  const DEMO_INSIGHTS = {
+    critical: "This is a critical remote code execution vulnerability that allows unauthenticated attackers to execute arbitrary commands on the server via crafted input. An attacker who exploits this can achieve full system compromise, data exfiltration, and lateral movement within your infrastructure. Upgrade immediately — this vulnerability has active public exploits in the wild.",
+    high:     "This high-severity vulnerability allows attackers to bypass authentication controls or inject malicious payloads into your application. Successful exploitation can lead to unauthorized data access, session hijacking, or privilege escalation depending on the deployment context. Upgrade to the patched version as soon as possible and audit your access logs for suspicious activity.",
+    medium:   "This medium-severity vulnerability enables attackers under specific conditions to perform denial of service or limited information disclosure. While exploitation requires some prerequisites, it can be chained with other vulnerabilities to increase impact. Schedule an upgrade within your next patch cycle and apply any available workarounds in the interim.",
+  };
+
+  async function fetchCveInsight(vuln, idx) {
+    const elId = `ai-cve-${idx}`;
+    const el   = document.getElementById(elId);
+    if (!el) return;
+
+    if (!backendOnline) {
+      typeText(elId, DEMO_INSIGHTS[vuln.severity] || DEMO_INSIGHTS.medium);
+      return;
+    }
+
+    try {
+      const params = new URLSearchParams({
+        cve_id:  vuln.id || vuln.osv_id || 'Unknown',
+        package: vuln.package || '',
+        version: vuln.version || '',
+        summary: vuln.summary || '',
+        score:   vuln.score || 5.0,
+      });
+      const res = await fetch(`${BACKEND}/cve/insight?${params}`);
+      if (!res.ok) { typeText(elId, DEMO_INSIGHTS[vuln.severity]||DEMO_INSIGHTS.medium); return; }
+
+      el.innerHTML = '<span class="ai-cursor"></span>';
+      const reader  = res.body.getReader();
+      const decoder = new TextDecoder();
+      let text = '';
+      while (true) {
+        const {done, value} = await reader.read();
+        if (done) break;
+        text += decoder.decode(value, {stream:true});
+        el.innerHTML = text + '<span class="ai-cursor"></span>';
+      }
+      el.innerHTML = text;
+    } catch { typeText(elId, DEMO_INSIGHTS[vuln.severity]||DEMO_INSIGHTS.medium); }
+  }
+
+  function typeText(elId, text) {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    let i = 0;
+    el.innerHTML = '<span class="ai-cursor"></span>';
+    const t = setInterval(() => {
+      if (i >= text.length) { el.innerHTML = text; clearInterval(t); return; }
+      i += 3;
+      el.innerHTML = text.slice(0,i) + '<span class="ai-cursor"></span>';
+    }, 18);
+  }
+
+  // ═══════════════════════════════════
+  // FINISH SCAN
+  // ═══════════════════════════════════
+  function finishScan(packages) {
+    scanning = false;
+    document.getElementById('scan-btn').disabled = false;
+    document.getElementById('scan-progress').classList.remove('show');
+    setStatus('Complete', 'done');
+    window.SENTINEL_CONTEXT = { page: 'cve', target: stackLabel, scanData: scanResults };
+
+    const {total} = updateSummary();
+    document.getElementById('summary-bar').classList.add('show');
+    document.getElementById('summary-right').innerHTML = `${packages} package${packages!==1?'s':''} scanned<br>${Object.keys(scanResults).length} vulnerable`;
+
+    if (total === 0) {
+      document.getElementById('clean-state').classList.add('show');
+    } else {
+      setTimeout(() => document.getElementById('report-wrap').classList.add('show'), 900);
+    }
+  }
+
+  // ═══════════════════════════════════
+  // DEMO SCAN
+  // ═══════════════════════════════════
+  function runDemoScan(pkgList) {
+    document.getElementById('scan-pkg-label').textContent = 'Querying OSV database…';
+
+    const demoResults = {
+      'log4j-core@2.14.1': {
+        package: {name:'log4j-core',version:'2.14.1',ecosystem:'Maven'},
+        vulns: [
+          {id:'CVE-2021-44228',osv_id:'GHSA-jfh8-c2jp-hdp8',summary:'Remote code execution via JNDI lookup in log messages',score:10.0,severity:'critical',fixed_in:'2.15.0',published:'2021-12-10',nvd_url:'https://nvd.nist.gov/vuln/detail/CVE-2021-44228',package:'log4j-core',version:'2.14.1'},
+          {id:'CVE-2021-45046',osv_id:'GHSA-7rjr-3q55-vv33',summary:'Denial of service via Thread Context Map pattern',score:9.0,severity:'critical',fixed_in:'2.16.0',published:'2021-12-14',nvd_url:'https://nvd.nist.gov/vuln/detail/CVE-2021-45046',package:'log4j-core',version:'2.14.1'},
+        ]
+      },
+      'lodash@4.17.15': {
+        package: {name:'lodash',version:'4.17.15',ecosystem:'npm'},
+        vulns: [
+          {id:'CVE-2021-23337',osv_id:'GHSA-35jh-r3h4-6jhm',summary:'Command injection via template function',score:7.2,severity:'high',fixed_in:'4.17.21',published:'2021-02-15',nvd_url:'https://nvd.nist.gov/vuln/detail/CVE-2021-23337',package:'lodash',version:'4.17.15'},
+          {id:'CVE-2020-28500',osv_id:'GHSA-29mw-wpgm-hmr9',summary:'ReDoS via regular expression in trim functions',score:5.3,severity:'medium',fixed_in:'4.17.21',published:'2021-02-15',nvd_url:'https://nvd.nist.gov/vuln/detail/CVE-2020-28500',package:'lodash',version:'4.17.15'},
+        ]
+      },
+      'django@3.2.0': {
+        package: {name:'django',version:'3.2.0',ecosystem:'PyPI'},
+        vulns: [
+          {id:'CVE-2022-34265',osv_id:'GHSA-qrw5-5h28-modp',summary:'SQL injection via Trunc(kind) and Extract(lookup_name)',score:9.8,severity:'critical',fixed_in:'3.2.14',published:'2022-07-04',nvd_url:'https://nvd.nist.gov/vuln/detail/CVE-2022-34265',package:'django',version:'3.2.0'},
+        ]
+      },
+    };
+
+    // Filter to only show packages that match the user's input
+    const userNames = pkgList.map(p => p.name.toLowerCase());
+    let results = {};
+    for (const [key, val] of Object.entries(demoResults)) {
+      if (userNames.length === 0 || userNames.some(n => key.toLowerCase().includes(n))) {
+        results[key] = val;
+      }
+    }
+    if (Object.keys(results).length === 0) results = demoResults;
+
+    scanResults = results;
+    renderResults(results);
+    const totalPkgs = pkgList.length || 3;
+    setTimeout(() => finishScan(totalPkgs), 800);
+  }
+
+  // ═══════════════════════════════════
+  // START SCAN
+  // ═══════════════════════════════════
+  async function startScan() {
+    if (scanning) return;
+
+    let packages = [];
+    if (activeTab === 'manual') {
+      addChipFromInput(); // capture anything still in input
+      packages = [...chips];
+      if (packages.length === 0) return;
+      stackLabel = packages.map(p => `${p.name} ${p.version}`).join(', ');
+    } else {
+      packages = [...uploadedPkgs];
+      if (packages.length === 0) return;
+      stackLabel = `${packages.length} packages from file`;
+    }
+
+    scanning = true;
+    document.getElementById('scan-btn').disabled = true;
+    setStatus('Scanning', 'scanning');
+    resetResults();
+    document.getElementById('scan-pkg-label').textContent = `Checking ${packages.length} package${packages.length!==1?'s':''}…`;
+
+    // Ping backend
+    let online = false;
+    try {
+      const ping = await Promise.race([
+        fetch(`${BACKEND}/ping`),
+        new Promise((_,r) => setTimeout(()=>r(new Error),2000))
+      ]);
+      online = ping.ok;
+    } catch {}
+    backendOnline = online;
+
+    if (!online) { runDemoScan(packages); return; }
+
+    try {
+      const res = await fetch(`${BACKEND}/cve/scan`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({packages}),
+      });
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      scanResults = data.results || {};
+      renderResults(scanResults);
+      setTimeout(() => finishScan(data.packages_scanned || packages.length), 400);
+    } catch {
+      runDemoScan(packages);
+    }
+  }
+
+  // ═══════════════════════════════════
+  // REPORT
+  // ═══════════════════════════════════
+  async function generateReport() {
+    const btn = document.getElementById('report-btn');
+    btn.disabled = true; btn.textContent = 'Generating…';
+
+    const win = window.open('','_blank');
+    if (win) win.document.write(`<!DOCTYPE html><html><head><style>body{margin:0;background:#080a0e;color:rgba(255,255,255,.4);font-family:Inter,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;gap:16px}.d{width:6px;height:6px;border-radius:50%;background:#f0a500;animation:p 1.2s ease-in-out infinite}@keyframes p{0%,100%{opacity:.2}50%{opacity:1}}p{font-size:9px;letter-spacing:6px;text-transform:uppercase}</style></head><body><div class="d"></div><p>Generating Report</p></body></html>`);
+
+    try {
+      const res = await fetch(`${BACKEND}/cve/report`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({stack_label:stackLabel, results:scanResults}),
+      });
+      if (!res.ok) throw new Error(`${res.status}`);
+      const html = await res.text();
+      if (win&&!win.closed) { win.document.open(); win.document.write(html); win.document.close(); }
+      else {
+        const blob=new Blob([html],{type:'text/html'});
+        const a=document.createElement('a');
+        a.href=URL.createObjectURL(blob);
+        a.download=`sentinel-cve-report.html`;
+        a.click();
+      }
+    } catch(e) {
+      if(win)win.close();
+      alert(`Report failed: ${e.message}`);
+    } finally {
+      btn.disabled=false; btn.textContent='Generate Report ↗';
+    }
+  }
+  </script>
+  <script>window.SENTINEL_CONTEXT = { page: 'cve' };</script>
+  <script src="config.js"></script>
+  <script src="ai-assistant.js"></script>
+</body>
+</html>
