@@ -5,5 +5,5 @@
 const SENTINEL_CONFIG = {
   BACKEND: window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
     ? 'http://localhost:8000'
-    : 'https://YOUR_RAILWAY_URL.up.railway.app',  // ← update this after Railway deploy
+    : 'sentinel-production-70b1.up.railway.app',  // ← update this after Railway deploy
 };
