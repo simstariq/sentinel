@@ -594,15 +594,7 @@
     function showModes() {
       if (modesShown) return;
       modesShown = true;
-
-      const screen = document.getElementById('mode-screen');
-      screen.classList.add('active');
-
-      // Stagger card reveal
-      const cards = document.querySelectorAll('.mode-card');
-      cards.forEach((card, i) => {
-        setTimeout(() => card.classList.add('revealed'), 80 + i * 90);
-      });
+      window.location.href = 'city.html';
     }
 
     // Back button
