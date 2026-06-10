@@ -12,6 +12,10 @@ import ssl
 import datetime
 import ipaddress
 from typing import AsyncGenerator, List
+from collections import deque
+
+# In-memory scan history (last 20 scans, resets on server restart)
+scan_history: deque = deque(maxlen=20)
 
 import requests
 from fastapi import FastAPI, Request, UploadFile, File
@@ -366,6 +370,49 @@ async def ping():
     return {"status": "ok", "version": "1.0.0"}
 
 
+def compute_findings_from_data(all_data: dict) -> dict:
+    """Replicate the frontend severity-counting logic from asm.html."""
+    findings = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+    ssl_data = all_data.get("ssl", {})
+    if ssl_data.get("valid") is False:
+        findings["critical"] += 1
+    elif ssl_data.get("days_left", 999) < 30:
+        findings["medium"] += 1
+    proto = ssl_data.get("protocol", "")
+    if proto and proto not in ("TLSv1.3", "TLSv1.2"):
+        findings["high"] += 1
+    SEC_HEADERS = [
+        ("strict-transport-security", "high"),
+        ("content-security-policy",   "high"),
+        ("x-frame-options",           "medium"),
+        ("x-content-type-options",    "low"),
+        ("referrer-policy",           "low"),
+        ("permissions-policy",        "low"),
+    ]
+    present_lower = [h.lower() for h in all_data.get("headers", {}).get("present", [])]
+    for header, sev in SEC_HEADERS:
+        if header not in present_lower:
+            findings[sev] += 1
+    RISKY_PORTS = {21, 23, 3306, 5432, 6379, 27017, 9200, 8080}
+    for p in all_data.get("ports", {}).get("results", []):
+        if p.get("state") == "open" and p.get("port") in RISKY_PORTS:
+            findings["high"] += 1
+    if all_data.get("dns", {}).get("dnssec") is False:
+        findings["low"] += 1
+    findings["critical"] += len(all_data.get("github", {}).get("secrets", []))
+    return findings
+
+
+def compute_score_from_findings(findings: dict) -> int:
+    score = (
+        findings["critical"] * 25 +
+        findings["high"]     * 15 +
+        findings["medium"]   *  8 +
+        findings["low"]      *  3
+    )
+    return min(100, score)
+
+
 @app.get("/scan")
 async def scan(target: str):
     """Main scan endpoint — streams SSE events as phases complete."""
@@ -375,6 +422,7 @@ async def scan(target: str):
         github = is_github(target_clean)
         domain = extract_domain(target_clean)
         host   = domain  # for port scanning
+        accumulated = {}  # collect phase results for history
 
         phases = []
 
@@ -398,10 +446,21 @@ async def scan(target: str):
             await asyncio.sleep(0.1)
             try:
                 data = await coro
+                accumulated[phase_name] = data
                 yield sse_event({"phase": phase_name, "status": "complete", "data": data})
             except Exception as e:
                 yield sse_event({"phase": phase_name, "status": "error", "error": str(e)})
             await asyncio.sleep(0.05)
+
+        # Save completed scan to history
+        findings = compute_findings_from_data(accumulated)
+        score    = compute_score_from_findings(findings)
+        scan_history.append({
+            "target":    target_clean,
+            "timestamp": datetime.datetime.utcnow().isoformat(),
+            "findings":  findings,
+            "score":     score,
+        })
 
         yield sse_event({"status": "done"})
 
@@ -428,6 +487,12 @@ PHASE_PROMPTS = {
     "ports": "You are a security analyst. Given these port scan results, write 2-3 sentences: flag any dangerous open ports (MySQL/Redis/MongoDB exposed to internet is critical), explain why each risky port matters, and what an attacker could do with access.",
     "github": "You are a security analyst. Given these GitHub secret scan results, write 2-3 sentences: assess the severity of exposed credentials, what an attacker could do with each type of secret, and the urgency of remediation.",
 }
+
+
+@app.get("/recent-scans")
+async def recent_scans(limit: int = 10):
+    """Return the last N completed scans, newest first."""
+    return {"scans": list(reversed(list(scan_history)))[:limit]}
 
 
 @app.get("/ai-insight")
