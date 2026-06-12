@@ -595,18 +595,12 @@
       if (modesShown) return;
       modesShown = true;
 
-      // Classic mode: show the grid. Default: go to city hub.
-      const classic = new URLSearchParams(window.location.search).get('classic');
-      if (classic) {
-        const screen = document.getElementById('mode-screen');
-        screen.classList.add('active');
-        const cards = document.querySelectorAll('.mode-card');
-        cards.forEach((card, i) => {
-          setTimeout(() => card.classList.add('revealed'), 80 + i * 90);
-        });
-      } else {
-        window.location.href = 'city.html';
-      }
+      const screen = document.getElementById('mode-screen');
+      screen.classList.add('active');
+      const cards = document.querySelectorAll('.mode-card');
+      cards.forEach((card, i) => {
+        setTimeout(() => card.classList.add('revealed'), 80 + i * 90);
+      });
     }
 
     // Back button
