@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Phishing Domain Detector — SENTINEL</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --ora:      #ff6b35;
+      --ora-dim:  rgba(255,107,53,0.45);
+      --ora-glow: rgba(255,107,53,0.08);
+      --red:   #ff4d6a;  --orange: #ff8c42;
+      --yellow:#ffd166;  --green:  #06d6a0;
+      --blue:  #4da6ff;
+      --bg:        #080a0e;
+      --surface:   rgba(255,255,255,0.025);
+      --border:    rgba(255,107,53,0.1);
+      --border-hi: rgba(255,107,53,0.35);
+      --text:      rgba(255,255,255,0.85);
+      --text-dim:  rgba(255,255,255,0.35);
+      --text-mute: rgba(255,255,255,0.15);
+      --mono: 'JetBrains Mono', monospace;
+    }
+    html, body { width:100%; min-height:100vh; background:var(--bg); color:var(--text); font-family:'Inter',sans-serif; overflow-x:hidden; }
+    body::after { content:''; position:fixed; inset:0; background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.012) 2px,rgba(0,0,0,.012) 4px); pointer-events:none; z-index:9999; }
+
+    /* NAV */
+    nav { display:flex; align-items:center; justify-content:space-between; padding:20px 40px; border-bottom:1px solid var(--border); position:sticky; top:0; z-index:100; background:rgba(8,10,14,.92); backdrop-filter:blur(20px); }
+    .nav-brand { font-size:9px; letter-spacing:10px; color:var(--ora-dim); text-transform:uppercase; text-decoration:none; transition:color .3s; }
+    .nav-brand:hover { color:var(--ora); }
+    .nav-module { font-size:9px; letter-spacing:5px; color:var(--text-dim); text-transform:uppercase; }
+    .nav-status { display:flex; align-items:center; gap:8px; font-size:9px; letter-spacing:3px; color:var(--text-mute); text-transform:uppercase; font-family:var(--mono); }
+    .status-dot { width:6px; height:6px; border-radius:50%; background:var(--text-mute); transition:background .3s; }
+    .status-dot.scanning { background:var(--ora); box-shadow:0 0 8px var(--ora); animation:blink .8s infinite; }
+    .status-dot.done { background:var(--green); box-shadow:0 0 8px var(--green); }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+    /* INPUT SECTION */
+    .input-section { padding:48px 40px 28px; max-width:960px; margin:0 auto; }
+    .input-header { margin-bottom:28px; }
+    .input-header h1 { font-size:22px; font-weight:300; letter-spacing:1px; margin-bottom:6px; }
+    .input-header p { font-size:11px; font-weight:300; color:var(--text-dim); letter-spacing:1px; }
+
+    /* Domain input */
+    .domain-input-wrap { display:flex; gap:0; border:1px solid var(--border); background:var(--surface); transition:border-color .3s, box-shadow .3s; }
+    .domain-input-wrap:focus-within { border-color:var(--border-hi); box-shadow:0 0 40px var(--ora-glow); }
+    .domain-prefix { display:flex; align-items:center; padding:0 14px; font-size:11px; font-family:var(--mono); color:var(--text-mute); border-right:1px solid var(--border); white-space:nowrap; }
+    #domain-input { flex:1; background:transparent; border:none; outline:none; color:var(--text); font-family:var(--mono); font-size:14px; padding:16px 18px; }
+    #domain-input::placeholder { color:var(--text-mute); }
+
+    /* Example tags */
+    .example-row { display:flex; flex-wrap:wrap; gap:10px; margin-top:14px; align-items:center; }
+    .example-label { font-size:9px; letter-spacing:3px; text-transform:uppercase; color:var(--text-mute); }
+    .ex-tag { font-size:10px; font-family:var(--mono); color:var(--text-mute); border:1px solid rgba(255,107,53,0.15); padding:4px 12px; cursor:pointer; transition:all .2s; }
+    .ex-tag:hover { color:var(--ora-dim); border-color:var(--border-hi); }
+
+    /* Disclaimer */
+    .disclaimer { margin-top:14px; font-size:10px; color:rgba(255,107,53,0.4); font-family:var(--mono); border-left:2px solid rgba(255,107,53,0.2); padding-left:10px; }
+
+    /* Scan button */
+    .scan-btn { width:100%; height:52px; background:transparent; border:1px solid var(--border-hi); color:var(--ora); font-family:'Inter',sans-serif; font-size:9px; letter-spacing:6px; text-transform:uppercase; cursor:pointer; transition:background .3s; margin-top:16px; }
+    .scan-btn:hover:not(:disabled) { background:var(--ora-glow); }
+    .scan-btn:disabled { opacity:.4; cursor:not-allowed; }
+
+    /* RESULTS */
+    .results-section { max-width:960px; margin:0 auto; padding:0 40px 80px; }
+
+    /* Progress tracker */
+    .progress-wrap { display:none; margin-bottom:28px; }
+    .progress-wrap.show { display:block; }
+    .progress-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+    .progress-label { font-size:9px; letter-spacing:4px; text-transform:uppercase; color:var(--ora-dim); font-family:var(--mono); }
+    .progress-count { font-size:9px; font-family:var(--mono); color:var(--text-mute); }
+    .progress-bar-track { height:2px; background:rgba(255,107,53,0.1); overflow:hidden; }
+    .progress-bar-fill { height:100%; background:var(--ora); transition:width .3s ease; width:0%; }
+    .progress-current { font-size:9px; font-family:var(--mono); color:var(--text-mute); margin-top:8px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+    /* Summary bar */
+    .summary-bar { display:none; align-items:center; justify-content:space-between; padding:18px 24px; background:rgba(255,107,53,0.04); border:1px solid rgba(255,107,53,0.18); margin-bottom:28px; flex-wrap:wrap; gap:16px; }
+    .summary-bar.show { display:flex; }
+    .summary-counts { display:flex; gap:28px; flex-wrap:wrap; }
+    .scount .num { font-family:var(--mono); font-size:22px; font-weight:300; }
+    .scount .lbl { font-size:8px; letter-spacing:3px; text-transform:uppercase; color:var(--text-mute); }
+    .scount.checked .num  { color:var(--text); }
+    .scount.live .num     { color:var(--ora); }
+    .scount.critical .num { color:var(--red); }
+    .scount.high .num     { color:var(--orange); }
+    .summary-meta { text-align:right; font-size:10px; font-family:var(--mono); color:var(--text-mute); line-height:1.7; }
+
+    /* AI Summary block */
+    .ai-summary-block { display:none; padding:20px 24px; background:rgba(77,166,255,0.04); border:1px solid rgba(77,166,255,0.15); margin-bottom:28px; }
+    .ai-summary-block.show { display:block; }
+    .ai-summary-label { font-size:8px; letter-spacing:4px; text-transform:uppercase; color:rgba(77,166,255,0.55); font-family:var(--mono); margin-bottom:10px; }
+    .ai-summary-text { font-size:12px; color:rgba(255,255,255,0.55); line-height:1.8; font-weight:300; font-style:italic; }
+
+    /* Technique filter pills */
+    .filter-row { display:none; flex-wrap:wrap; gap:8px; margin-bottom:20px; }
+    .filter-row.show { display:flex; }
+    .filter-pill { font-size:9px; letter-spacing:2px; text-transform:uppercase; font-family:var(--mono); border:1px solid var(--border); padding:5px 12px; cursor:pointer; color:var(--text-mute); transition:all .2s; }
+    .filter-pill.active { border-color:var(--border-hi); color:var(--ora-dim); background:var(--ora-glow); }
+
+    /* Empty / clean state */
+    .state-box { display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:320px; text-align:center; }
+    .state-box .icon { font-size:28px; opacity:.3; margin-bottom:16px; }
+    .state-box p { font-size:10px; letter-spacing:4px; text-transform:uppercase; color:var(--text-mute); margin-bottom:6px; }
+    .state-box span { font-size:10px; font-family:var(--mono); color:var(--text-mute); opacity:.6; }
+
+    .clean-state { display:none; flex-direction:column; align-items:center; justify-content:center; min-height:220px; gap:12px; text-align:center; }
+    .clean-state.show { display:flex; }
+    .clean-state h3 { font-size:13px; font-weight:300; color:var(--green); letter-spacing:2px; }
+    .clean-state p { font-size:10px; color:var(--text-mute); font-family:var(--mono); }
+
+    /* Finding cards */
+    #findings-list { display:flex; flex-direction:column; gap:2px; }
+    .finding-card { opacity:0; transform:translateY(6px); transition:opacity .35s ease, transform .35s ease; }
+    .finding-card.show { opacity:1; transform:translateY(0); }
+    .finding-card.hidden { display:none; }
+
+    .fc-inner { background:var(--surface); border:1px solid var(--border); transition:border-color .25s; }
+    .fc-inner:hover { border-color:rgba(255,107,53,0.22); }
+
+    .fc-header { display:flex; align-items:center; gap:14px; padding:14px 20px; cursor:pointer; }
+    .risk-badge { width:56px; height:40px; border-radius:3px; display:flex; align-items:center; justify-content:center; font-family:var(--mono); font-size:8px; font-weight:500; letter-spacing:2px; text-transform:uppercase; flex-shrink:0; }
+    .risk-badge.critical { background:rgba(255,77,106,0.1);  color:var(--red);    border:1px solid rgba(255,77,106,0.3); }
+    .risk-badge.high     { background:rgba(255,140,66,0.1);  color:var(--orange); border:1px solid rgba(255,140,66,0.3); }
+    .risk-badge.medium   { background:rgba(255,107,53,0.08); color:var(--ora);    border:1px solid rgba(255,107,53,0.25); }
+    .risk-badge.low      { background:rgba(6,214,160,0.07);  color:var(--green);  border:1px solid rgba(6,214,160,0.25); }
+
+    .fc-info { flex:1; min-width:0; }
+    .fc-domain { font-family:var(--mono); font-size:13px; color:var(--ora-dim); margin-bottom:3px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .fc-technique { font-size:9px; letter-spacing:3px; text-transform:uppercase; color:var(--text-mute); }
+
+    .fc-meta { text-align:right; font-size:9px; font-family:var(--mono); color:var(--text-mute); line-height:1.9; flex-shrink:0; }
+
+    .fc-chevron { color:var(--text-mute); font-size:10px; transition:transform .3s; flex-shrink:0; }
+    .fc-header.collapsed .fc-chevron { transform:rotate(-90deg); }
+
+    .fc-body { padding:0 20px 16px; display:flex; flex-direction:column; gap:10px; }
+    .fc-detail-row { display:flex; gap:32px; flex-wrap:wrap; }
+    .fc-detail { font-size:10px; font-family:var(--mono); }
+    .fc-detail .dlbl { font-size:8px; letter-spacing:3px; text-transform:uppercase; color:var(--text-mute); display:block; margin-bottom:3px; }
+    .fc-detail .dval { color:var(--text-dim); }
+
+    .fc-status-live   { color:var(--red); }
+    .fc-status-active { color:var(--orange); }
+
+    .fc-actions { display:flex; gap:10px; padding-top:8px; border-top:1px solid rgba(255,255,255,.05); }
+    .fc-link { font-size:9px; letter-spacing:3px; text-transform:uppercase; color:var(--ora-dim); border:1px solid rgba(255,107,53,0.2); padding:5px 14px; text-decoration:none; font-family:var(--mono); transition:all .25s; cursor:pointer; }
+    .fc-link:hover { background:var(--ora-glow); color:var(--ora); }
+
+    /* Live indicator pulse */
+    .live-dot { display:inline-block; width:5px; height:5px; border-radius:50%; background:var(--red); margin-right:5px; animation:ldot 1.2s ease-in-out infinite; vertical-align:middle; }
+    @keyframes ldot { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.4;transform:scale(.7)} }
+
+    ::-webkit-scrollbar { width:4px; }
+    ::-webkit-scrollbar-track { background:transparent; }
+    ::-webkit-scrollbar-thumb { background:rgba(255,107,53,0.2); }
+  </style>
+</head>
+<body>
+
+  <nav>
+    <a href="index.html" class="nav-brand">← Sentinel</a>
+    <span class="nav-module">Phishing Domain Detector</span>
+    <div class="nav-status">
+      <div class="status-dot" id="status-dot"></div>
+      <span id="status-text">Ready</span>
+    </div>
+  </nav>
+
+  <div class="input-section">
+    <div class="input-header">
+      <h1>Lookalike &amp; Typosquatting Detector</h1>
+      <p>Enter a legitimate brand domain to surface active impersonation and phishing infrastructure</p>
+    </div>
+
+    <div class="domain-input-wrap">
+      <span class="domain-prefix">Target →</span>
+      <input id="domain-input" type="text" placeholder="paypal.com" autocomplete="off" spellcheck="false" />
+    </div>
+
+    <div class="example-row">
+      <span class="example-label">Try:</span>
+      <span class="ex-tag" onclick="setDomain('paypal.com')">paypal.com</span>
+      <span class="ex-tag" onclick="setDomain('microsoft.com')">microsoft.com</span>
+      <span class="ex-tag" onclick="setDomain('chase.com')">chase.com</span>
+      <span class="ex-tag" onclick="setDomain('amazon.com')">amazon.com</span>
+      <span class="ex-tag" onclick="setDomain('coinbase.com')">coinbase.com</span>
+    </div>
+
+    <div class="disclaimer">⚠ Only analyze domains you have authorization to investigate. This tool performs passive DNS and HTTP probing only.</div>
+
+    <button class="scan-btn" id="scan-btn" onclick="startScan()">🎯 Detect Lookalike Domains</button>
+  </div>
+
+  <!-- RESULTS -->
+  <div class="results-section">
+
+    <!-- Progress bar -->
+    <div class="progress-wrap" id="progress-wrap">
+      <div class="progress-header">
+        <span class="progress-label">Scanning variants</span>
+        <span class="progress-count" id="progress-count">0 / 0</span>
+      </div>
+      <div class="progress-bar-track">
+        <div class="progress-bar-fill" id="progress-bar"></div>
+      </div>
+      <div class="progress-current" id="progress-current">Initializing…</div>
+    </div>
+
+    <!-- Summary bar (shown after scan) -->
+    <div class="summary-bar" id="summary-bar">
+      <div class="summary-counts">
+        <div class="scount checked">  <div class="num" id="cnt-checked">0</div> <div class="lbl">Checked</div></div>
+        <div class="scount live">     <div class="num" id="cnt-live">0</div>    <div class="lbl">Live Threats</div></div>
+        <div class="scount critical"> <div class="num" id="cnt-critical">0</div><div class="lbl">Critical</div></div>
+        <div class="scount high">     <div class="num" id="cnt-high">0</div>    <div class="lbl">High</div></div>
+      </div>
+      <div class="summary-meta" id="summary-meta"></div>
+    </div>
+
+    <!-- AI Threat Intel block -->
+    <div class="ai-summary-block" id="ai-block">
+      <div class="ai-summary-label">AI Threat Intelligence</div>
+      <div class="ai-summary-text" id="ai-text"></div>
+    </div>
+
+    <!-- Technique filter pills -->
+    <div class="filter-row" id="filter-row"></div>
+
+    <!-- Empty state -->
+    <div class="state-box" id="empty-state">
+      <div class="icon">🎯</div>
+      <p>No scan active</p>
+      <span>Enter a brand domain above to detect lookalike threats</span>
+    </div>
+
+    <!-- Clean state -->
+    <div class="clean-state" id="clean-state">
+      <div style="font-size:32px">✅</div>
+      <h3>No Live Lookalikes Found</h3>
+      <p>No active typosquatting or impersonation domains were detected for this target.</p>
+    </div>
+
+    <!-- Findings list -->
+    <div id="findings-list"></div>
+
+  </div>
+
+  <script src="config.js"></script>
+  <script>
+  // ─── STATE ───────────────────────────────────────────────────────────────────
+  const BACKEND = (typeof SENTINEL_CONFIG !== 'undefined')
+    ? SENTINEL_CONFIG.BACKEND : 'http://localhost:8000';
+
+  let scanning    = false;
+  let findings    = [];   // all live results
+  let totalChecked = 0;
+  let totalVariants = 0;
+  let activeFilter = 'all';
+  let backendOnline = false;
+
+  // ─── DEMO DATA (offline fallback) ────────────────────────────────────────────
+  const DEMO_FINDINGS = [
+    { domain:'paypa1.com',          technique:'Char Substitution', risk:'critical', live:true, ip:'192.0.2.11', status:200, title:'PayPal — Verify Your Account' },
+    { domain:'paypal-login.com',    technique:'Prefix Combo',      risk:'high',     live:true, ip:'192.0.2.22', status:200, title:'Secure Login - PayPal' },
+    { domain:'secure-paypal.com',   technique:'Prefix Combo',      risk:'high',     live:true, ip:'192.0.2.33', status:302, title:null },
+    { domain:'paypallogin.net',     technique:'Suffix Combo',      risk:'high',     live:true, ip:'192.0.2.44', status:200, title:'PayPal Account Portal' },
+    { domain:'paypa1.net',          technique:'Char Substitution', risk:'critical', live:true, ip:'192.0.2.55', status:200, title:'Log in to Your Account' },
+    { domain:'paaypal.com',         technique:'Doubled Char',      risk:'medium',   live:true, ip:'192.0.2.66', status:200, title:null },
+    { domain:'pyapal.com',          technique:'Transposed Chars',  risk:'low',      live:true, ip:'192.0.2.77', status:403, title:null },
+    { domain:'paypal.co',           technique:'TLD Swap',          risk:'high',     live:true, ip:'192.0.2.88', status:200, title:'PayPal' },
+    { domain:'verify-paypal.com',   technique:'Prefix Combo',      risk:'high',     live:true, ip:'192.0.2.99', status:200, title:'Verify Identity — PayPal' },
+    { domain:'paypalverify.com',    technique:'Suffix Combo',      risk:'medium',   live:true, ip:'192.0.2.10', status:200, title:null },
+  ];
+
+  // ─── HELPERS ─────────────────────────────────────────────────────────────────
+  function setDomain(d) {
+    document.getElementById('domain-input').value = d;
+    document.getElementById('domain-input').focus();
+  }
+
+  function setStatus(state, text) {
+    const dot  = document.getElementById('status-dot');
+    const span = document.getElementById('status-text');
+    dot.className = 'status-dot' + (state ? ' ' + state : '');
+    span.textContent = text;
+  }
+
+  function hide(id) { document.getElementById(id).style.display = 'none'; }
+  function show(id, d='block') { document.getElementById(id).style.display = d; }
+
+  function riskColor(r) {
+    return { critical:'#ff4d6a', high:'#ff8c42', medium:'#ff6b35', low:'#06d6a0' }[r] || '#aaa';
+  }
+
+  // ─── SCAN ENTRY POINT ────────────────────────────────────────────────────────
+  async function startScan() {
+    const raw = document.getElementById('domain-input').value.trim();
+    if (!raw) return;
+
+    // Reset state
+    findings = [];
+    totalChecked = 0;
+    totalVariants = 0;
+    activeFilter = 'all';
+    scanning = true;
+
+    document.getElementById('findings-list').innerHTML = '';
+    document.getElementById('filter-row').innerHTML    = '';
+    document.getElementById('filter-row').className   = 'filter-row';
+    document.getElementById('summary-bar').className  = 'summary-bar';
+    document.getElementById('ai-block').className     = 'ai-summary-block';
+    document.getElementById('clean-state').className  = 'clean-state';
+    document.getElementById('empty-state').style.display = 'none';
+    document.getElementById('scan-btn').disabled = true;
+
+    // Progress bar
+    document.getElementById('progress-wrap').className = 'progress-wrap show';
+    updateProgress(0, 0, 'Generating variants…');
+
+    setStatus('scanning', 'Scanning…');
+
+    // Ping backend
+    try {
+      const ping = await fetch(`${BACKEND}/ping`, { signal: AbortSignal.timeout(3000) });
+      backendOnline = ping.ok;
+    } catch { backendOnline = false; }
+
+    if (!backendOnline) {
+      await runDemoScan(raw);
+    } else {
+      await runRealScan(raw);
+    }
+  }
+
+  // ─── REAL SCAN (SSE) ─────────────────────────────────────────────────────────
+  async function runRealScan(domain) {
+    const url = `${BACKEND}/phishing?domain=${encodeURIComponent(domain)}`;
+    let es;
+    try {
+      es = new EventSource(url);
+    } catch (e) {
+      await runDemoScan(domain);
+      return;
+    }
+
+    es.onmessage = (evt) => {
+      const d = JSON.parse(evt.data);
+
+      if (d.type === 'start') {
+        totalVariants = d.total;
+        updateProgress(0, d.total, `Checking ${d.total} variants of ${d.domain}…`);
+      }
+      else if (d.type === 'progress') {
+        totalChecked = d.checked;
+        updateProgress(d.checked, d.total, d.current);
+      }
+      else if (d.type === 'finding') {
+        findings.push(d.finding);
+        addFindingCard(d.finding);
+        updateSummaryBar();
+      }
+      else if (d.type === 'done') {
+        es.close();
+        finishScan(d.checked, d.live_count, d.ai_summary);
+      }
+      else if (d.type === 'error') {
+        es.close();
+        alert(d.msg || 'Scan error');
+        resetUI();
+      }
+    };
+
+    es.onerror = () => {
+      es.close();
+      finishScan(totalChecked, findings.length, null);
+    };
+  }
+
+  // ─── DEMO SCAN ───────────────────────────────────────────────────────────────
+  async function runDemoScan(domain) {
+    const name = domain.split('.')[0];
+
+    // Simulate progress
+    const total = 80;
+    for (let i = 1; i <= total; i++) {
+      await new Promise(r => setTimeout(r, 18));
+      updateProgress(i, total, `Checking ${name}${String.fromCharCode(97 + (i % 26))}.com…`);
+    }
+
+    // Show demo findings with stagger
+    for (let i = 0; i < DEMO_FINDINGS.length; i++) {
+      const f = { ...DEMO_FINDINGS[i] };
+      // Replace "paypal" with actual domain name in demo data
+      f.domain = f.domain.replace('paypal', name);
+      if (f.title) f.title = f.title.replace(/PayPal/g, domain);
+      findings.push(f);
+      addFindingCard(f);
+      updateSummaryBar();
+      await new Promise(r => setTimeout(r, 120));
+    }
+
+    const demoSummary = `⚡ DEMO MODE — Backend offline. Showing simulated scan results. ${findings.length} lookalike domains detected for ${domain}, including critical character-substitution variants that replace letters with digits (e.g., 'l'→'1') and high-risk prefix/suffix combinations commonly used in credential-harvesting campaigns. Immediately register defensive domains and configure brand monitoring alerts.`;
+    finishScan(total, findings.length, demoSummary);
+  }
+
+  // ─── UI UPDATES ──────────────────────────────────────────────────────────────
+  function updateProgress(checked, total, current) {
+    const pct = total > 0 ? Math.round((checked / total) * 100) : 0;
+    document.getElementById('progress-bar').style.width = pct + '%';
+    document.getElementById('progress-count').textContent = `${checked} / ${total}`;
+    document.getElementById('progress-current').textContent = current || '';
+  }
+
+  function updateSummaryBar() {
+    const crit = findings.filter(f => f.risk === 'critical').length;
+    const high = findings.filter(f => f.risk === 'high').length;
+    document.getElementById('cnt-checked').textContent  = totalChecked || findings.length;
+    document.getElementById('cnt-live').textContent     = findings.length;
+    document.getElementById('cnt-critical').textContent = crit;
+    document.getElementById('cnt-high').textContent     = high;
+    document.getElementById('summary-bar').className = 'summary-bar show';
+  }
+
+  function finishScan(checked, liveCount, aiSummary) {
+    scanning = false;
+    document.getElementById('progress-wrap').className = 'progress-wrap';
+    document.getElementById('scan-btn').disabled = false;
+    totalChecked = checked;
+
+    updateSummaryBar();
+
+    const now = new Date();
+    document.getElementById('summary-meta').innerHTML =
+      `Target: <span style="color:var(--ora-dim)">${document.getElementById('domain-input').value.trim()}</span><br>` +
+      `Scan completed: ${now.toLocaleTimeString()}<br>` +
+      `Variants checked: ${checked}`;
+
+    if (liveCount === 0) {
+      document.getElementById('clean-state').className = 'clean-state show';
+      setStatus('done', 'Clean');
+    } else {
+      setStatus('done', `${liveCount} threats found`);
+      buildFilterPills();
+    }
+
+    if (aiSummary) {
+      document.getElementById('ai-text').textContent = aiSummary;
+      document.getElementById('ai-block').className = 'ai-summary-block show';
+    }
+  }
+
+  function resetUI() {
+    scanning = false;
+    document.getElementById('scan-btn').disabled = false;
+    document.getElementById('progress-wrap').className = 'progress-wrap';
+    setStatus('', 'Ready');
+    document.getElementById('empty-state').style.display = 'flex';
+  }
+
+  // ─── FINDING CARDS ───────────────────────────────────────────────────────────
+  function addFindingCard(f) {
+    const list = document.getElementById('findings-list');
+    const id   = 'fc-' + findings.length;
+
+    const statusHtml = f.status
+      ? `<span class="live-dot"></span>${f.status}`
+      : `<span class="live-dot"></span>DNS only`;
+
+    const titleHtml = f.title
+      ? `<div class="fc-detail"><span class="dlbl">Page Title</span><span class="dval">${esc(f.title.slice(0,60))}</span></div>`
+      : '';
+
+    const card = document.createElement('div');
+    card.className = 'finding-card';
+    card.dataset.technique = f.technique;
+    card.dataset.risk = f.risk;
+    card.id = id;
+
+    card.innerHTML = `
+      <div class="fc-inner">
+        <div class="fc-header" onclick="toggleCard('${id}')">
+          <div class="risk-badge ${f.risk}">${f.risk}</div>
+          <div class="fc-info">
+            <div class="fc-domain">${esc(f.domain)}</div>
+            <div class="fc-technique">${esc(f.technique)}</div>
+          </div>
+          <div class="fc-meta">
+            ${f.ip ? `IP: ${esc(f.ip)}<br>` : ''}${statusHtml}
+          </div>
+          <div class="fc-chevron">▾</div>
+        </div>
+        <div class="fc-body" id="${id}-body">
+          <div class="fc-detail-row">
+            <div class="fc-detail">
+              <span class="dlbl">Detection Method</span>
+              <span class="dval">${esc(f.technique)}</span>
+            </div>
+            <div class="fc-detail">
+              <span class="dlbl">Risk Level</span>
+              <span class="dval" style="color:${riskColor(f.risk)}">${f.risk.toUpperCase()}</span>
+            </div>
+            ${f.ip ? `<div class="fc-detail"><span class="dlbl">Resolved IP</span><span class="dval">${esc(f.ip)}</span></div>` : ''}
+            ${f.status ? `<div class="fc-detail"><span class="dlbl">HTTP Status</span><span class="dval fc-status-${f.status < 400 ? 'live' : 'active'}">${f.status}</span></div>` : ''}
+          </div>
+          ${titleHtml}
+          <div class="fc-actions">
+            <a class="fc-link" href="https://who.is/whois/${esc(f.domain)}" target="_blank" rel="noopener">WHOIS ↗</a>
+            <a class="fc-link" href="https://www.virustotal.com/gui/domain/${esc(f.domain)}" target="_blank" rel="noopener">VirusTotal ↗</a>
+            <span class="fc-link" onclick="copyDomain('${esc(f.domain)}')">Copy Domain</span>
+          </div>
+        </div>
+      </div>`;
+
+    list.appendChild(card);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => card.classList.add('show'));
+    });
+  }
+
+  function toggleCard(id) {
+    const body   = document.getElementById(id + '-body');
+    const header = document.querySelector(`#${id} .fc-header`);
+    const isOpen = body.style.display !== 'none';
+    body.style.display   = isOpen ? 'none' : '';
+    header.classList.toggle('collapsed', isOpen);
+  }
+
+  function copyDomain(d) {
+    navigator.clipboard.writeText(d).then(() => {
+      setStatus('done', 'Copied!');
+      setTimeout(() => setStatus(findings.length ? 'done' : '', findings.length ? `${findings.length} threats` : 'Ready'), 1500);
+    });
+  }
+
+  // ─── FILTER PILLS ────────────────────────────────────────────────────────────
+  function buildFilterPills() {
+    const techniques = [...new Set(findings.map(f => f.technique))];
+    const row = document.getElementById('filter-row');
+    row.innerHTML = '';
+
+    const all = document.createElement('span');
+    all.className = 'filter-pill active';
+    all.textContent = `All (${findings.length})`;
+    all.onclick = () => applyFilter('all', all);
+    row.appendChild(all);
+
+    techniques.forEach(t => {
+      const count = findings.filter(f => f.technique === t).length;
+      const pill  = document.createElement('span');
+      pill.className = 'filter-pill';
+      pill.textContent = `${t} (${count})`;
+      pill.onclick = () => applyFilter(t, pill);
+      row.appendChild(pill);
+    });
+
+    row.className = 'filter-row show';
+  }
+
+  function applyFilter(technique, pill) {
+    activeFilter = technique;
+    document.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
+    pill.classList.add('active');
+
+    document.querySelectorAll('.finding-card').forEach(card => {
+      const match = technique === 'all' || card.dataset.technique === technique;
+      card.classList.toggle('hidden', !match);
+    });
+  }
+
+  // ─── SANITIZE ────────────────────────────────────────────────────────────────
+  function esc(s) {
+    if (s == null) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // ─── KEYBOARD ────────────────────────────────────────────────────────────────
+  document.getElementById('domain-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !scanning) startScan();
+  });
+  </script>
+</body>
+</html>

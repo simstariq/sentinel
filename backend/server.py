@@ -1451,6 +1451,225 @@ body::after{{content:'';position:fixed;inset:0;background:repeating-linear-gradi
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# PHISHING DOMAIN DETECTOR
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _generate_lookalike_domains(domain: str) -> list:
+    """Generate typosquatting and lookalike domain variants using multiple techniques."""
+    domain = domain.lower().strip()
+    if domain.startswith("www."):
+        domain = domain[4:]
+
+    if "." not in domain:
+        name, tld = domain, "com"
+    else:
+        name, tld = domain.rsplit(".", 1)
+
+    variants: list = []
+    seen: set = {domain}
+
+    def add(d: str, technique: str, risk: str = "medium"):
+        d = d.lower().strip(".")
+        if d and d != domain and d not in seen and len(d) < 64 and "." in d:
+            seen.add(d)
+            variants.append({"domain": d, "technique": technique, "risk": risk})
+
+    # ── TLD swaps ───────────────────────────────────────────────────────────
+    high_tlds = ["com", "net", "org"]
+    other_tlds = ["co", "io", "info", "biz", "us", "xyz", "site", "online",
+                  "co.uk", "de", "fr", "ru", "cn", "cc", "app"]
+    for alt in high_tlds + other_tlds:
+        if alt != tld:
+            add(f"{name}.{alt}", "TLD Swap", "high" if alt in high_tlds else "medium")
+
+    # ── Prefix combos ────────────────────────────────────────────────────────
+    for pfx in ["login", "secure", "my", "account", "verify", "signin",
+                "safe", "auth", "portal", "pay", "support", "update"]:
+        add(f"{pfx}-{name}.{tld}", "Prefix Combo", "high")
+        add(f"{pfx}{name}.{tld}",  "Prefix Combo", "high")
+
+    # ── Suffix combos ────────────────────────────────────────────────────────
+    for sfx in ["login", "secure", "verify", "account", "portal",
+                "support", "help", "online", "pay", "app", "web"]:
+        add(f"{name}-{sfx}.{tld}", "Suffix Combo", "high")
+        add(f"{name}{sfx}.{tld}", "Suffix Combo", "medium")
+
+    # ── Character substitutions (homoglyphs + leet) ──────────────────────────
+    subs = {
+        "o": ["0"],
+        "i": ["1", "l"],
+        "l": ["1", "i"],
+        "a": ["4"],
+        "e": ["3"],
+        "s": ["5"],
+        "g": ["9"],
+    }
+    for idx, ch in enumerate(name):
+        if ch in subs:
+            for sub in subs[ch]:
+                new_name = name[:idx] + sub + name[idx + 1:]
+                add(f"{new_name}.{tld}", "Char Substitution", "critical")
+
+    # ── Multi-char visual confusion ───────────────────────────────────────────
+    for pat, sub in [("rn", "m"), ("m", "rn"), ("cl", "d"), ("vv", "w"),
+                     ("nn", "n"), ("ll", "l")]:
+        if pat in name:
+            add(name.replace(pat, sub, 1) + f".{tld}", "Visual Confusion", "critical")
+
+    # ── Doubled chars ────────────────────────────────────────────────────────
+    for idx in range(len(name)):
+        doubled = name[:idx] + name[idx] + name[idx:]
+        add(f"{doubled}.{tld}", "Doubled Char", "medium")
+
+    # ── Omitted chars ────────────────────────────────────────────────────────
+    if len(name) > 4:
+        for idx in range(len(name)):
+            removed = name[:idx] + name[idx + 1:]
+            if len(removed) >= 3:
+                add(f"{removed}.{tld}", "Omitted Char", "medium")
+
+    # ── Transposed adjacent chars ─────────────────────────────────────────────
+    for idx in range(len(name) - 1):
+        trans = name[:idx] + name[idx + 1] + name[idx] + name[idx + 2:]
+        add(f"{trans}.{tld}", "Transposed Chars", "low")
+
+    # ── Adjacent keyboard typos (top 2 neighbors only) ───────────────────────
+    adj: dict = {
+        "a": "sqwz", "b": "vghn", "c": "xdfv", "d": "sxcef",
+        "e": "wsdr",  "f": "dcvgr", "g": "fvbht", "h": "gbynj",
+        "i": "ujko",  "j": "hnkmu", "k": "jmli",  "l": "kop",
+        "m": "njk",   "n": "bhjm",  "o": "ilkp",  "p": "ol",
+        "q": "wa",    "r": "edft",  "s": "aqdewxz","t": "rfgy",
+        "u": "yhji",  "v": "cfgb",  "w": "qase",  "x": "zasd",
+        "y": "tghu",  "z": "asx",
+    }
+    for idx, ch in enumerate(name):
+        if ch in adj:
+            for neighbor in adj[ch][:2]:
+                new_name = name[:idx] + neighbor + name[idx + 1:]
+                add(f"{new_name}.{tld}", "Keyboard Typo", "low")
+
+    # ── Hyphen insertion ──────────────────────────────────────────────────────
+    for idx in range(1, len(name)):
+        add(f"{name[:idx]}-{name[idx:]}.{tld}", "Hyphen Insertion", "low")
+
+    return variants
+
+
+async def _check_domain_live(domain: str) -> dict:
+    """DNS lookup + optional HTTP probe for a single domain."""
+    loop = asyncio.get_event_loop()
+
+    # DNS
+    try:
+        ip = await loop.run_in_executor(None, socket.gethostbyname, domain)
+    except Exception:
+        return {"live": False, "ip": None, "status": None, "title": None}
+
+    # HTTP (best-effort, short timeout)
+    status = None
+    title = None
+
+    def _http_probe():
+        import urllib3
+        urllib3.disable_warnings()
+        for scheme in ("https", "http"):
+            try:
+                r = requests.get(
+                    f"{scheme}://{domain}",
+                    timeout=4,
+                    verify=False,
+                    allow_redirects=True,
+                    headers={"User-Agent": "Mozilla/5.0 (compatible; SENTINEL/1.0)"},
+                )
+                m = re.search(r"<title[^>]*>([^<]{1,80})</title>", r.text[:3000], re.I)
+                return r.status_code, m.group(1).strip() if m else None
+            except Exception:
+                continue
+        return None, None
+
+    try:
+        status, title = await loop.run_in_executor(None, _http_probe)
+    except Exception:
+        pass
+
+    return {"live": True, "ip": ip, "status": status, "title": title}
+
+
+@app.get("/phishing")
+async def detect_phishing_domains(domain: str = ""):
+    """SSE stream: detect live lookalike / typosquatting domains."""
+    domain = re.sub(r"^https?://", "", domain.strip().lower()).split("/")[0]
+
+    if not domain or "." not in domain:
+        async def _err():
+            yield f"data: {json.dumps({'type':'error','msg':'Please provide a valid domain (e.g. paypal.com)'})}\n\n"
+        return StreamingResponse(_err(), media_type="text/event-stream")
+
+    async def _stream() -> AsyncGenerator[str, None]:
+        variants = _generate_lookalike_domains(domain)
+
+        yield f"data: {json.dumps({'type':'start','domain':domain,'total':len(variants)})}\n\n"
+        await asyncio.sleep(0.05)
+
+        live_results: list = []
+        checked = 0
+        batch_size = 6
+
+        for i in range(0, len(variants), batch_size):
+            batch = variants[i : i + batch_size]
+            tasks = [_check_domain_live(v["domain"]) for v in batch]
+            raw = await asyncio.gather(*tasks, return_exceptions=True)
+
+            for variant, result in zip(batch, raw):
+                checked += 1
+                if isinstance(result, Exception):
+                    result = {"live": False, "ip": None, "status": None, "title": None}
+
+                yield f"data: {json.dumps({'type':'progress','checked':checked,'total':len(variants),'current':variant['domain']})}\n\n"
+
+                if result.get("live"):
+                    finding = {**variant, **result}
+                    live_results.append(finding)
+                    yield f"data: {json.dumps({'type':'finding','finding':finding})}\n\n"
+
+            await asyncio.sleep(0.03)
+
+        # AI threat summary
+        ai_summary = None
+        if ai_client and live_results:
+            try:
+                prompt = f"""You are a cybersecurity threat analyst reviewing live lookalike domains detected for "{domain}".
+
+Live threats found ({len(live_results)} domains):
+{json.dumps([{"domain": r["domain"], "technique": r["technique"], "risk": r["risk"], "ip": r["ip"], "title": r.get("title")} for r in live_results[:20]], indent=2)[:2000]}
+
+Write a concise threat intelligence summary (3-4 sentences) covering:
+1. The most dangerous findings and their likely attack purpose
+2. Which techniques (e.g. char substitution, prefix combos) are most commonly used
+3. The single most critical recommended action
+
+Be direct. No bullet points. Plain prose only."""
+
+                msg = ai_client.messages.create(
+                    model="claude-haiku-4-5-20251001",
+                    max_tokens=350,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                ai_summary = msg.content[0].text
+            except Exception as e:
+                ai_summary = None
+
+        yield f"data: {json.dumps({'type':'done','checked':checked,'live_count':len(live_results),'ai_summary':ai_summary})}\n\n"
+
+    return StreamingResponse(
+        _stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # ENTRY POINT
 # ═══════════════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
